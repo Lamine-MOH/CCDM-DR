@@ -1,0 +1,36 @@
+# Output (generated at runtime)
+output/
+output_*.txt
+
+# Eval checkpoints (large .pth files)
+evaluation/eval_ckpts/
+
+# evaluator.py writes .npz files at runtime
+*.npy
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Checkpoints / data
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.ckpt
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/

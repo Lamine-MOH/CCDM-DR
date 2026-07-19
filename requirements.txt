@@ -1,0 +1,21 @@
+torch>=2.0
+torchvision>=0.15
+einops
+timm
+h5py
+pyyaml
+tqdm
+numpy
+scipy
+matplotlib
+pillow
+dask
+requests
+accelerate
+ema-pytorch
+packaging
+
+# DR-specific additions
+opencv-python-headless>=4.8
+pandas>=1.5
+scikit-learn>=1.2
