@@ -9,12 +9,19 @@ Fork of UBCDingXin/CCDM (iCCDM) adapted to generate grade-conditioned diabetic r
 ### Data preparation
 
 ```bash
+# 1. Download and prepare a dataset (APTOS, IDRiD, DDR, or Messidor-2)
+python data_preparation/get_dataset.py --dataset Aptos
+python data_preparation/get_dataset.py --dataset IDRiD --save_path /data
+
+# 2. Build the h5 dataset from the prepared output
 python data_preparation/build_dr_h5.py \
-    --image_dir /path/to/fundus_images \
-    --csv_path  /path/to/train.csv \
-    --out_dir   /path/to/output/DRGrading \
+    --image_dir ./data/Aptos/Images \
+    --csv_path  ./data/Aptos/labels.csv \
+    --out_dir   ./data/DRGrading \
     --img_size  128
 ```
+
+`get_dataset.py` downloads the raw dataset and normalizes it into `{save_path}/{dataset_name}/Images/` + `labels.csv` (columns: `id_code, diagnosis`). `build_dr_h5.py` then converts that into the h5 format CCDM-DR expects.
 
 Produces `{out_dir}/DRGrading_128x128.h5` (train) and `DRGrading_128x128_test.h5` (held-out test). The h5 schema is `images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades).
 
@@ -71,6 +78,8 @@ python downstream_eval/compare_runs.py --results_dir ./downstream_results
 - `models/` — UNet variants (`unet_edm.py` used by DR configs), DiT, auxiliary ResNet heads.
 - `evaluation/evaluator.py` — Computes SFID/LS/IS using pretrained networks. For DRGrading, these checkpoints must be trained separately.
 - `config/model_cfg/` — YAML configs for each model+resolution combination.
+- `data_preparation/get_dataset.py` — Downloads and normalizes DR datasets into a common structure.
+- `data_preparation/build_dr_h5.py` — Converts normalized dataset into h5 format for training.
 
 ## Dependencies
 

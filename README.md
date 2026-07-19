@@ -16,20 +16,23 @@ from the original repo isn't here.
 ```bash
 pip install -r requirements.txt
 
-# 1. Build the h5 dataset from a fundus image folder + CSV of ICDR grades
+# 1. Download and prepare a dataset (APTOS, IDRiD, DDR, or Messidor-2)
+python data_preparation/get_dataset.py --dataset Aptos
+
+# 2. Build the h5 dataset from the prepared output
 python data_preparation/build_dr_h5.py \
-    --image_dir /path/to/fundus_images \
-    --csv_path  /path/to/train.csv \
-    --out_dir   /path/to/output/DRGrading \
+    --image_dir ./data/Aptos/Images \
+    --csv_path  ./data/Aptos/labels.csv \
+    --out_dir   ./data/DRGrading \
     --img_size  128
 
-# 2. Train (export ROOT_PATH and DATA_PATH first)
+# 3. Train (export ROOT_PATH and DATA_PATH first)
 export ROOT_PATH=/path/to/CCDM-DR
 export DATA_PATH=/path/to/DRGrading   # dir containing DRGrading_*.h5
 bash config/DR128/run_train.sh          # main 128x128 config
 bash config/DR64/run_train.sh           # fast-iteration 64x64 debug config
 
-# 3. Evaluate: does the synthetic data actually help a DR classifier?
+# 4. Evaluate: does the synthetic data actually help a DR classifier?
 python downstream_eval/train_dr_classifier.py \
     --real_h5 /path/DRGrading_128x128.h5 \
     --test_h5 /path/DRGrading_128x128_test.h5 \
@@ -55,6 +58,7 @@ gap" section below before you touch `--do_eval`.
 | `opts.py` | Added `"DRGrading"` to the `--data_name` choices. |
 | `evaluation/evaluator.py` | Added a `DRGrading` branch pointing to `./evaluation/eval_ckpts/DRGrading/...`. **These checkpoints don't exist yet** — see "The eval-checkpoint gap" below. |
 | `main.py` | **Bug fix.** Upstream unconditionally imports `evaluation/eval_models/{data_name}/metrics_{size}x{size}` right after training, regardless of `--do_eval`. That path doesn't exist for `DRGrading`, so every DR run would otherwise crash right after sampling — after the GPU time for training was already spent. This is now gated behind `if args.do_eval:` (a no-op for the original datasets). |
+| `data_preparation/get_dataset.py` | **New.** Downloads and normalizes APTOS/IDRiD/DDR/Messidor-2 into a common `{dataset}/Images/` + `labels.csv` structure. |
 | `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop). |
 | `config/DR128/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR. |
 | `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/EfficientNet-B4) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
@@ -115,6 +119,7 @@ CCDM-DR/
 │   ├── evaluator.py               # modified: + DRGrading branch (checkpoint gap above)
 │   └── eval_models/                # empty except __init__.py -- see "What was removed"
 ├── data_preparation/
+│   ├── get_dataset.py              # download + normalize APTOS/IDRiD/DDR/Messidor-2
 │   └── build_dr_h5.py             # image folder + CSV -> h5
 ├── downstream_eval/
 │   ├── train_dr_classifier.py     # the real vs real+synthetic experiment
