@@ -25,7 +25,12 @@ bash config/DR128/run_train.sh    # main 128×128 config
 bash config/DR64/run_train.sh     # fast-iteration 64×64 debug config
 ```
 
-Both scripts call `python main.py` with DR-appropriate flags. Edit `ROOT_PATH` and `DATA_PATH` at the top of the script before running.
+Both scripts call `python main.py` with DR-appropriate flags. `ROOT_PATH` and `DATA_PATH` are read from environment variables and must be exported before running:
+
+```bash
+export ROOT_PATH=/path/to/CCDM-DR
+export DATA_PATH=/path/to/DRGrading   # dir containing DRGrading_*.h5
+```
 
 ### Downstream evaluation (the primary evidence)
 

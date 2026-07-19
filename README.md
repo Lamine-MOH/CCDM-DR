@@ -23,7 +23,9 @@ python data_preparation/build_dr_h5.py \
     --out_dir   /path/to/output/DRGrading \
     --img_size  128
 
-# 2. Train (edit ROOT_PATH / DATA_PATH inside the script first)
+# 2. Train (export ROOT_PATH and DATA_PATH first)
+export ROOT_PATH=/path/to/CCDM-DR
+export DATA_PATH=/path/to/DRGrading   # dir containing DRGrading_*.h5
 bash config/DR128/run_train.sh          # main 128x128 config
 bash config/DR64/run_train.sh           # fast-iteration 64x64 debug config
 
