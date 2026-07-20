@@ -59,8 +59,11 @@ def dataset_download(dataset_name, data_path="./data/"):
     print(f"Downloading {dataset_name} Dataset")
     
     # Aptos Dataset
-    if dataset_name == "Aptos":        
-        path = kagglehub.dataset_download("mariaherrerot/aptos2019", path=data_path)
+    if dataset_name == "Aptos":
+        cache_path = kagglehub.dataset_download("mariaherrerot/aptos2019")
+        path = os.path.join(data_path, "aptos2019")
+        os.makedirs(path, exist_ok=True)
+        shutil.copytree(cache_path, path, dirs_exist_ok=True)
         
     # IDRiD Dataset
     elif dataset_name == "IDRiD":        
@@ -81,11 +84,17 @@ def dataset_download(dataset_name, data_path="./data/"):
                 
     # DDR Dataset
     elif dataset_name == "DDR":
-        path = kagglehub.dataset_download("mariaherrerot/ddrdataset", path=data_path)
+        cache_path = kagglehub.dataset_download("mariaherrerot/ddrdataset")
+        path = os.path.join(data_path, "ddrdataset")
+        os.makedirs(path, exist_ok=True)
+        shutil.copytree(cache_path, path, dirs_exist_ok=True)
         
     # Messidor-2 Dataset
     elif dataset_name == "Messidor-2":
-        path = kagglehub.dataset_download("mariaherrerot/messidor2preprocess", path=data_path)
+        cache_path = kagglehub.dataset_download("mariaherrerot/messidor2preprocess")
+        path = os.path.join(data_path, "messidor2preprocess")
+        os.makedirs(path, exist_ok=True)
+        shutil.copytree(cache_path, path, dirs_exist_ok=True)
         
     return path
 
