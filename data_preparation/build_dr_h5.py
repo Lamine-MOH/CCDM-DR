@@ -176,7 +176,7 @@ def main():
     n_test = int(len(images) * args.test_frac)
     test_idx, train_idx = idx[:n_test], idx[n_test:]
 
-    train_path = os.path.join(args.out_dir, f"DRGrading_{args.img_size}x{args.img_size}.h5")
+    train_path = os.path.join(args.out_dir, f"DRGrading_{args.img_size}x{args.img_size}_train.h5")
     test_path = os.path.join(args.out_dir, f"DRGrading_{args.img_size}x{args.img_size}_test.h5")
 
     with h5py.File(train_path, "w") as hf:
