@@ -71,7 +71,8 @@ def dataset_download(dataset_name, data_path="./data/"):
         zip_path = os.path.join(data_path, "IDRiD_Grading.zip")
         
         # Download
-        gdown.download(file_id, output=zip_path,quiet=False)
+        os.makedirs(data_path, exist_ok=True)
+        gdown.download(file_id, output=zip_path, quiet=False, fuzzy=True)
         
         # Unzip
         print(f"Extracting file {zip_path} ...")
@@ -80,7 +81,7 @@ def dataset_download(dataset_name, data_path="./data/"):
         with zipfile.ZipFile(zip_path, 'r') as ref:
             ref.extractall(path)
         
-        path = os.path.join(path, "B.Disease Grading/")
+        path = os.path.join(path, "B. Disease Grading/")
                 
     # DDR Dataset
     elif dataset_name == "DDR":
