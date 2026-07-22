@@ -36,6 +36,9 @@ python data_preparation/build_dr_h5.py \
 bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
 bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
 
+# Override VRAM defaults if needed (--batch_size, --grad_accum, --samp_batch_size)
+bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 8 --grad_accum 16
+
 # 4. Evaluate: does the synthetic data actually help a DR classifier?
 python downstream_eval/train_dr_classifier.py \
     --real_h5 /path/DRGrading_128x128.h5 \

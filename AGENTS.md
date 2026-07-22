@@ -45,6 +45,16 @@ Both scripts call `python main.py` with DR-appropriate flags. Pass `ROOT_PATH` a
 bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
 ```
 
+Optional flags to override VRAM defaults:
+
+```bash
+# Low-VRAM GPU (e.g. 8GB T4)
+bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 8 --grad_accum 16
+
+# High-VRAM GPU (e.g. 80GB A100)
+bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 128 --grad_accum 1
+```
+
 ### Downstream evaluation (the primary evidence)
 
 ```bash
