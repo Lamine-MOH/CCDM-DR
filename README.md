@@ -32,11 +32,9 @@ python data_preparation/build_dr_h5.py \
     --out_dir   ./data/DRGrading \
     --img_size  128
 
-# 3. Train (export ROOT_PATH and DATA_PATH first)
-export ROOT_PATH=/path/to/CCDM-DR
-export DATA_PATH=/path/to/DRGrading/Aptos   # dir containing DRGrading_*_train.h5
-bash config/DR128/run_train.sh          # main 128x128 config
-bash config/DR64/run_train.sh           # fast-iteration 64x64 debug config
+# 3. Train (pass ROOT_PATH and DATA_PATH as arguments)
+bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
+bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
 
 # 4. Evaluate: does the synthetic data actually help a DR classifier?
 python downstream_eval/train_dr_classifier.py \

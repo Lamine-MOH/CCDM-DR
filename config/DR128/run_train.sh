@@ -8,11 +8,8 @@ export CUDA_VISIBLE_DEVICES=0
 DATA_NAME="DRGrading"
 IMG_SIZE=128
 
-# Require these environment variables to be set before running:
-#   export ROOT_PATH=/path/to/repo
-#   export DATA_PATH=/path/to/DRGrading   # dir containing DRGrading_128x128.h5
-ROOT_PATH="${ROOT_PATH:?ERROR: ROOT_PATH env var is not set. Export it before running.}"
-DATA_PATH="${DATA_PATH:?ERROR: DATA_PATH env var is not set. Export it before running.}"
+ROOT_PATH="${1:?Usage: bash run_train.sh ROOT_PATH DATA_PATH}"
+DATA_PATH="${2:?Usage: bash run_train.sh ROOT_PATH DATA_PATH}"
 
 SETTING="setup1_dr"
 # Grades are discrete/ordinal (0-4) with typically severe class imbalance
