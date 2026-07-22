@@ -44,7 +44,7 @@ class LabelEmbed:
         img_size = 64,
         nc = 3, 
         batch_size = 128, 
-        device = "cuda"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         ):
         
         self.device = device

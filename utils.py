@@ -145,8 +145,10 @@ def compute_entropy(labels, base=None):
     base = np.e if base is None else base
     return -(norm_counts * np.log(norm_counts)/np.log(base)).sum()
 
-def predict_class_labels(net, images, batch_size=500, verbose=False, num_workers=0):
-    net = net.cuda()
+def predict_class_labels(net, images, batch_size=500, verbose=False, num_workers=0, device=None):
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    net = net.to(device)
     net.eval()
 
     n = len(images)
@@ -161,7 +163,7 @@ def predict_class_labels(net, images, batch_size=500, verbose=False, num_workers
         if verbose:
             pb = SimpleProgressBar()
         for batch_idx, batch_images in enumerate(dataloader_pred):
-            batch_images = batch_images.type(torch.float).cuda()
+            batch_images = batch_images.type(torch.float).to(device)
             batch_size_curr = len(batch_images)
 
             outputs,_ = net(batch_images)

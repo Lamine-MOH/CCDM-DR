@@ -622,7 +622,7 @@ class Trainer:
             tmp = 0
             while tmp < nfake:
                 
-                batch_fake_labels = torch.from_numpy(given_labels[tmp:(tmp+batch_size)]).type(torch.float).view(-1).cuda()
+                batch_fake_labels = torch.from_numpy(given_labels[tmp:(tmp+batch_size)]).type(torch.float).view(-1).to(self.device)
                                 
                 if sampler=="sde":                    
                     batch_fake_images = self.ema.ema_model.sample_using_sde(

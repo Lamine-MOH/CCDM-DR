@@ -273,7 +273,7 @@ label_embedding = LabelEmbed(
                     img_size = args.image_size,
                     nc = args.num_channels, 
                     batch_size = 128, 
-                    device = "cuda",
+                    device = "cuda" if torch.cuda.is_available() else "cpu",
                     )
 fn_y2h = label_embedding.fn_y2h
 if args.use_y2cov:
@@ -365,7 +365,7 @@ for i in range(n_row):
     curr_label = selected_labels[i]
     for j in range(n_col):
         y_visual[i*n_col+j] = curr_label
-y_visual = torch.from_numpy(y_visual).type(torch.float).view(-1).cuda()
+y_visual = torch.from_numpy(y_visual).type(torch.float).view(-1).to("cuda" if torch.cuda.is_available() else "cpu")
 print(y_visual)
 
 
