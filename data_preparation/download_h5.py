@@ -90,6 +90,9 @@ def download_file(file_id, output_path):
     try:
         gdown.download(id=file_id, output=output_path, quiet=False, fuzzy=True)
         return True
+    except TypeError:
+        gdown.download(id=file_id, output=output_path, quiet=False)
+        return True
     except Exception as e:
         print(f"  Download failed: {e}", file=sys.stderr)
         if os.path.exists(output_path):
