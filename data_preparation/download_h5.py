@@ -37,17 +37,33 @@ import h5py
 DATASETS = ["Aptos", "IDRiD", "DDR", "Messidor2"]
 RESOLUTIONS = [64, 128, 256]
 
-# Mapping from (dataset, split) to env file key prefix
-# e.g. APTOS_TRAIN, IDRiD_TEST, etc.
+# Mapping from (dataset, split, resolution) to env file key
+# e.g. APTOS_128_TRAIN, IDRiD_64_TEST, etc.
 KEY_MAP = {
-    ("Aptos", "train"): "APTOS_TRAIN",
-    ("Aptos", "test"): "APTOS_TEST",
-    ("IDRiD", "train"): "IDRID_TRAIN",
-    ("IDRiD", "test"): "IDRID_TEST",
-    ("DDR", "train"): "DDR_TRAIN",
-    ("DDR", "test"): "DDR_TEST",
-    ("Messidor2", "train"): "MESSIDOR2_TRAIN",
-    ("Messidor2", "test"): "MESSIDOR2_TEST",
+    ("Aptos", "train", 64): "APTOS_64_TRAIN",
+    ("Aptos", "test", 64): "APTOS_64_TEST",
+    ("Aptos", "train", 128): "APTOS_128_TRAIN",
+    ("Aptos", "test", 128): "APTOS_128_TEST",
+    ("Aptos", "train", 256): "APTOS_256_TRAIN",
+    ("Aptos", "test", 256): "APTOS_256_TEST",
+    ("IDRiD", "train", 64): "IDRID_64_TRAIN",
+    ("IDRiD", "test", 64): "IDRID_64_TEST",
+    ("IDRiD", "train", 128): "IDRID_128_TRAIN",
+    ("IDRiD", "test", 128): "IDRID_128_TEST",
+    ("IDRiD", "train", 256): "IDRID_256_TRAIN",
+    ("IDRiD", "test", 256): "IDRID_256_TEST",
+    ("DDR", "train", 64): "DDR_64_TRAIN",
+    ("DDR", "test", 64): "DDR_64_TEST",
+    ("DDR", "train", 128): "DDR_128_TRAIN",
+    ("DDR", "test", 128): "DDR_128_TEST",
+    ("DDR", "train", 256): "DDR_256_TRAIN",
+    ("DDR", "test", 256): "DDR_256_TEST",
+    ("Messidor2", "train", 64): "MESSIDOR2_64_TRAIN",
+    ("Messidor2", "test", 64): "MESSIDOR2_64_TEST",
+    ("Messidor2", "train", 128): "MESSIDOR2_128_TRAIN",
+    ("Messidor2", "test", 128): "MESSIDOR2_128_TEST",
+    ("Messidor2", "train", 256): "MESSIDOR2_256_TRAIN",
+    ("Messidor2", "test", 256): "MESSIDOR2_256_TEST",
 }
 
 
@@ -159,7 +175,7 @@ def main():
         os.makedirs(ds_dir, exist_ok=True)
 
         for split in ["train", "test"]:
-            key = KEY_MAP[(dataset, split)]
+            key = KEY_MAP[(dataset, split, res)]
             if key not in links:
                 print(f"  WARNING: {key} not found in env file, skipping {split} split")
                 results.append((dataset, split, "skipped"))
