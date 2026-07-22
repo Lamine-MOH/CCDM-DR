@@ -188,10 +188,6 @@ def main():
 
     print(f"\nWrote {len(train_idx)} training images -> {train_path}")
     print(f"Wrote {len(test_idx)} held-out test images -> {test_path}")
-    print(
-        "\nNext: point --data_path in your run_train.sh at "
-        f"'{args.out_dir}' and set --data_name DRGrading --min_label 0 --max_label 4."
-    )
 
 
 if __name__ == "__main__":
