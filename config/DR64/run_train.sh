@@ -20,13 +20,15 @@ DATA_PATH="${2:?Usage: bash run_train.sh ROOT_PATH DATA_PATH [OPTIONS]}"
 shift 2
 
 # Defaults (fits 24GB GPU). Override via flags:
-#   --batch_size N, --grad_accum N, --samp_batch_size N
+#   --num_steps N, --batch_size N, --grad_accum N, --samp_batch_size N
+NUM_STEPS=60000
 BATCH_SIZE=32
 GRAD_ACCUM=4
 SAMP_BATCH_SIZE=100
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --num_steps)       NUM_STEPS="$2"; shift 2 ;;
         --batch_size)      BATCH_SIZE="$2"; shift 2 ;;
         --grad_accum)      GRAD_ACCUM="$2"; shift 2 ;;
         --samp_batch_size) SAMP_BATCH_SIZE="$2"; shift 2 ;;
@@ -47,7 +49,7 @@ python main.py \
     --model_config "./config/model_cfg/unet_edm_64_v1.yaml" \
     --y2h_embed_type "resnet" \
     --use_y2cov --y2cov_hy_weight_train 0.05 --y2cov_hy_weight_test 0.05 --y2cov_embed_type "resnet" --net_embed_y2cov_y2emb "cnn" \
-    --train_num_steps 60000 --resume_step 0 --train_lr 1e-4 \
+    --train_num_steps $NUM_STEPS --resume_step 0 --train_lr 1e-4 \
     --train_batch_size $BATCH_SIZE --gradient_accumulate_every $GRAD_ACCUM \
     --train_amp --train_mixed_precision fp16 \
     --kernel_sigma $SIGMA --threshold_type $TYPE --kappa $KAPPA \
