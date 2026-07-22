@@ -16,6 +16,12 @@ from the original repo isn't here.
 ```bash
 pip install -r requirements.txt
 
+# Option A: Download pre-built h5 files from Google Drive
+cp .env.h5_links.template .env.h5_links
+# Edit .env.h5_links with your Google Drive file IDs
+python data_preparation/download_h5.py --resolution 128
+
+# Option B: Build h5 files from raw datasets
 # 1. Download and prepare a dataset (APTOS, IDRiD, DDR, or Messidor-2)
 python data_preparation/get_dataset.py --dataset Aptos
 
@@ -28,7 +34,7 @@ python data_preparation/build_dr_h5.py \
 
 # 3. Train (export ROOT_PATH and DATA_PATH first)
 export ROOT_PATH=/path/to/CCDM-DR
-export DATA_PATH=/path/to/DRGrading   # dir containing DRGrading_*.h5
+export DATA_PATH=/path/to/DRGrading/Aptos   # dir containing DRGrading_*_train.h5
 bash config/DR128/run_train.sh          # main 128x128 config
 bash config/DR64/run_train.sh           # fast-iteration 64x64 debug config
 
@@ -54,12 +60,13 @@ gap" section below before you touch `--do_eval`.
 
 | File | Change |
 |---|---|
-| `dataset.py` | Added a `DRGrading` branch to `LoadDataSet`. DR severity grades are discrete integers 0-4 (ICDR scale), so this reuses the same loading/minority-replication logic already written for `UTKFace` (also a small integer label set) rather than the continuous-label logic used for `SteeringAngle`/`RC-49`. |
+| `dataset.py` | Added a `DRGrading` branch to `LoadDataSet`. DR severity grades are discrete integers 0-4 (ICDR scale), so this reuses the same loading/minority-replication logic already written for `UTKFace` (also a small integer label set) rather than the continuous-label logic used for `SteeringAngle`/`RC-49`. Now expects `{data_path}/DRGrading_{size}x{size}_train.h5` (with `_train` suffix). |
 | `opts.py` | Added `"DRGrading"` to the `--data_name` choices. |
 | `evaluation/evaluator.py` | Added a `DRGrading` branch pointing to `./evaluation/eval_ckpts/DRGrading/...`. **These checkpoints don't exist yet** — see "The eval-checkpoint gap" below. |
 | `main.py` | **Bug fix.** Upstream unconditionally imports `evaluation/eval_models/{data_name}/metrics_{size}x{size}` right after training, regardless of `--do_eval`. That path doesn't exist for `DRGrading`, so every DR run would otherwise crash right after sampling — after the GPU time for training was already spent. This is now gated behind `if args.do_eval:` (a no-op for the original datasets). |
 | `data_preparation/get_dataset.py` | **New.** Downloads and normalizes APTOS/IDRiD/DDR/Messidor-2 into a common `{dataset}/Images/` + `labels.csv` structure. |
 | `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop). |
+| `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (gitignored). Supports `--dataset` and `--resolution` flags for selective downloads. |
 | `config/DR128/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR. |
 | `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/EfficientNet-B4) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
 | `downstream_eval/compare_runs.py` | **New.** Summarizes multiple `train_dr_classifier.py` runs into one comparison table. |
@@ -103,7 +110,7 @@ whether the synthetic data improves a real DR classifier — which is what
 
 ```
 CCDM-DR/
-├── dataset.py                     # modified: + DRGrading branch
+├── dataset.py                     # modified: + DRGrading branch (expects _train.h5)
 ├── opts.py                        # modified: + DRGrading choice
 ├── main.py                        # modified: eval-model import gated behind --do_eval (bug fix)
 ├── trainer.py, diffusion.py, label_embedding.py, utils.py   # unmodified
@@ -120,10 +127,12 @@ CCDM-DR/
 │   └── eval_models/                # empty except __init__.py -- see "What was removed"
 ├── data_preparation/
 │   ├── get_dataset.py              # download + normalize APTOS/IDRiD/DDR/Messidor-2
-│   └── build_dr_h5.py             # image folder + CSV -> h5
+│   ├── build_dr_h5.py             # image folder + CSV -> h5
+│   └── download_h5.py             # download pre-built h5 from Google Drive
 ├── downstream_eval/
 │   ├── train_dr_classifier.py     # the real vs real+synthetic experiment
 │   └── compare_runs.py
+├── .env.h5_links.template         # template for Google Drive file IDs
 ├── requirements.txt
 ├── AGENTS.md                      # command/gotcha reference for coding agents
 └── LICENSE

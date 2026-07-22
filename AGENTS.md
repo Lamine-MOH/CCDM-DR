@@ -9,6 +9,16 @@ Fork of UBCDingXin/CCDM (iCCDM) adapted to generate grade-conditioned diabetic r
 ### Data preparation
 
 ```bash
+# Option A: Download pre-built h5 files from Google Drive
+# 1. Set up Google Drive file IDs (copy template and fill in your links)
+cp .env.h5_links.template .env.h5_links
+# Edit .env.h5_links with your Google Drive file IDs
+
+# 2. Download datasets (selectable by name and resolution)
+python data_preparation/download_h5.py --resolution 128
+python data_preparation/download_h5.py --dataset Aptos IDRiD --resolution 256
+
+# Option B: Build h5 files from raw datasets
 # 1. Download and prepare a dataset (APTOS, IDRiD, DDR, or Messidor-2)
 python data_preparation/get_dataset.py --dataset Aptos
 python data_preparation/get_dataset.py --dataset IDRiD --save_path /data
@@ -21,9 +31,9 @@ python data_preparation/build_dr_h5.py \
     --img_size  128
 ```
 
-`get_dataset.py` downloads the raw dataset and normalizes it into `{save_path}/{dataset_name}/Images/` + `labels.csv` (columns: `id_code, diagnosis`). `build_dr_h5.py` then converts that into the h5 format CCDM-DR expects.
+`download_h5.py` reads Google Drive file IDs from `.env.h5_links` and downloads pre-built h5 files into per-dataset subdirectories. `get_dataset.py` downloads the raw dataset and normalizes it into `{save_path}/{dataset_name}/Images/` + `labels.csv` (columns: `id_code, diagnosis`). `build_dr_h5.py` then converts that into the h5 format CCDM-DR expects.
 
-Produces `{out_dir}/DRGrading_128x128.h5` (train) and `DRGrading_128x128_test.h5` (held-out test). The h5 schema is `images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades).
+Produces `{out_dir}/{dataset}/DRGrading_{size}x{size}_train.h5` (train) and `DRGrading_{size}x{size}_test.h5` (held-out test). The h5 schema is `images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades).
 
 ### Training
 
@@ -36,7 +46,7 @@ Both scripts call `python main.py` with DR-appropriate flags. `ROOT_PATH` and `D
 
 ```bash
 export ROOT_PATH=/path/to/CCDM-DR
-export DATA_PATH=/path/to/DRGrading   # dir containing DRGrading_*.h5
+export DATA_PATH=/path/to/DRGrading/Aptos   # dir containing DRGrading_*_train.h5
 ```
 
 ### Downstream evaluation (the primary evidence)
@@ -80,6 +90,7 @@ python downstream_eval/compare_runs.py --results_dir ./downstream_results
 - `config/model_cfg/` — YAML configs for each model+resolution combination.
 - `data_preparation/get_dataset.py` — Downloads and normalizes DR datasets into a common structure.
 - `data_preparation/build_dr_h5.py` — Converts normalized dataset into h5 format for training.
+- `data_preparation/download_h5.py` — Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (gitignored).
 
 ## Dependencies
 
