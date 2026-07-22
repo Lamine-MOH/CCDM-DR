@@ -30,7 +30,7 @@ class LoadDataSet:
         self.imbalance_type = imbalance_type
         
         ## load the entire dataset from h5 file
-        with h5py.File(self.data_path+'/{}_{}x{}.h5'.format(self.data_name, self.img_size, self.img_size), 'r') as hf:
+        with h5py.File(self.data_path+'/{}_{}x{}_train.h5'.format(self.data_name, self.img_size, self.img_size), 'r') as hf:
             if self.data_name == "RC-49":
                 ## load h5 file
                 self.labels_all = hf['labels'][:].astype(float)

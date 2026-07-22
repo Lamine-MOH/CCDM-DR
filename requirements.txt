@@ -19,3 +19,4 @@ packaging
 opencv-python-headless>=4.8
 pandas>=1.5
 scikit-learn>=1.2
+gdown>=5.0

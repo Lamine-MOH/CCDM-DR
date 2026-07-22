@@ -4,7 +4,7 @@ build_dr_h5.py
 Converts a diabetic retinopathy dataset (image folder + CSV of grades) into the
 h5 format that CCDM-DR/dataset.py expects for data_name="DRGrading":
 
-    {data_path}/DRGrading_{img_size}x{img_size}.h5
+    {data_path}/DRGrading_{img_size}x{img_size}_train.h5
         - 'images': uint8 array, shape (N, 3, img_size, img_size), RGB, CHW
         - 'labels': float array, shape (N,), values in {0,1,2,3,4} (ICDR grades)
 
