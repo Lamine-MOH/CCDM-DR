@@ -140,7 +140,7 @@ def main():
     env_path = os.path.join(os.path.dirname(__file__), "..", args.env_file)
     if not os.path.exists(env_path):
         print(f"Error: env file not found: {env_path}", file=sys.stderr)
-        print(f"Create it with Google Drive file IDs. See .env.h5_links.template.", file=sys.stderr)
+        print(f"Create it with Google Drive file IDs. See .env.h5_links.", file=sys.stderr)
         sys.exit(1)
 
     links = parse_env_file(env_path)

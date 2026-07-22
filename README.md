@@ -17,8 +17,8 @@ from the original repo isn't here.
 pip install -r requirements.txt
 
 # Option A: Download pre-built h5 files from Google Drive
-cp .env.h5_links.template .env.h5_links
-# Edit .env.h5_links with your Google Drive file IDs
+# 1. Fill in your Google Drive file IDs in .env.h5_links
+# 2. Download datasets (selectable by name and resolution)
 python data_preparation/download_h5.py --resolution 128
 
 # Option B: Build h5 files from raw datasets
@@ -132,7 +132,7 @@ CCDM-DR/
 ├── downstream_eval/
 │   ├── train_dr_classifier.py     # the real vs real+synthetic experiment
 │   └── compare_runs.py
-├── .env.h5_links.template         # template for Google Drive file IDs
+├── .env.h5_links                 # Google Drive file IDs (commit this)
 ├── requirements.txt
 ├── AGENTS.md                      # command/gotcha reference for coding agents
 └── LICENSE

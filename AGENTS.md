@@ -10,10 +10,7 @@ Fork of UBCDingXin/CCDM (iCCDM) adapted to generate grade-conditioned diabetic r
 
 ```bash
 # Option A: Download pre-built h5 files from Google Drive
-# 1. Set up Google Drive file IDs (copy template and fill in your links)
-cp .env.h5_links.template .env.h5_links
-# Edit .env.h5_links with your Google Drive file IDs
-
+# 1. Fill in your Google Drive file IDs in .env.h5_links
 # 2. Download datasets (selectable by name and resolution)
 python data_preparation/download_h5.py --resolution 128
 python data_preparation/download_h5.py --dataset Aptos IDRiD --resolution 256

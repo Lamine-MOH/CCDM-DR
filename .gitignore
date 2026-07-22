@@ -34,6 +34,3 @@ env/
 
 # Jupyter
 .ipynb_checkpoints/
-
-# Google Drive file IDs (contains private links)
-.env.h5_links
