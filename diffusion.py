@@ -134,9 +134,9 @@ class ElucidatedDiffusion(nn.Module):
             if keep_indx is None:
                 keep_indx = torch.arange(start=0, end=B, step=1, dtype=torch.long, device=device)
             B_keep = len(labels[keep_indx])
-            labels_emb_tilde = self.convert_y_to_tilde_h(labels[keep_indx]) # (B_keep, c, h ,w)  
-            # print(labels_emb_tilde.min().item(), labels_emb_tilde.mean().item(), labels_emb_tilde.max().item(), (torch.abs(labels_emb_tilde - 1) < 1e-5).float().mean().item())    
-            cov_diag[keep_indx, :,:,:] = cov_diag[keep_indx, :,:,:] + y2cov_hy_weight * labels_emb_tilde * sigma[keep_indx].view(B_keep, 1, 1, 1)
+            if B_keep > 0:
+                labels_emb_tilde = self.convert_y_to_tilde_h(labels[keep_indx]) # (B_keep, c, h ,w)  
+                cov_diag[keep_indx, :,:,:] = cov_diag[keep_indx, :,:,:] + y2cov_hy_weight * labels_emb_tilde * sigma[keep_indx].view(B_keep, 1, 1, 1)
         
         return cov_diag
     
@@ -166,8 +166,10 @@ class ElucidatedDiffusion(nn.Module):
         if self.use_y2cov:
             if keep_indx is None:
                 keep_indx = torch.arange(start=0, end=B, step=1, dtype=torch.long, device=device)
-            labels_emb_tilde = self.convert_y_to_tilde_h(labels[keep_indx]) # (B_keep, c, h ,w)      
-            dcov_diag[keep_indx, :,:,:] = dcov_diag[keep_indx, :,:,:] + y2cov_hy_weight * labels_emb_tilde
+            B_keep = len(labels[keep_indx])
+            if B_keep > 0:
+                labels_emb_tilde = self.convert_y_to_tilde_h(labels[keep_indx]) # (B_keep, c, h ,w)      
+                dcov_diag[keep_indx, :,:,:] = dcov_diag[keep_indx, :,:,:] + y2cov_hy_weight * labels_emb_tilde
         
         return dcov_diag
     
