@@ -614,7 +614,6 @@ class Trainer:
         if batch_size>nfake:
             batch_size = nfake
         fake_images = []
-        assert nfake%batch_size==0
         
         self.ema.ema_model.eval()
         with torch.inference_mode():
