@@ -52,6 +52,7 @@ class Trainer:
         y_visual = None,
         cond_scale_visual=1.5,
         cond_rescaled_phi_visual = 0.7,
+        visual_samp_batch_size = 25,
         results_folder = './output/results',
         amp = False,
         mixed_precision_type = 'fp16',
@@ -101,7 +102,8 @@ class Trainer:
         self.nrow_visual = int(math.sqrt(self.num_samples))
         self.sample_every = sample_every
         self.cond_scale_visual = cond_scale_visual
-        self.cond_rescaled_phi_visual = cond_rescaled_phi_visual   
+        self.cond_rescaled_phi_visual = cond_rescaled_phi_visual
+        self.visual_samp_batch_size = visual_samp_batch_size
         
         ### hyper-parameters
         self.save_every = save_every
@@ -544,30 +546,39 @@ class Trainer:
                     if self.step != 0 and divisible_by(self.step, self.sample_every):
                         self.ema.ema_model.eval()
                         with torch.inference_mode():
+                            torch.cuda.empty_cache()
+                            bs = self.visual_samp_batch_size
                             #sde sampler
-                            gen_imgs = self.ema.ema_model.sample_using_sde(
-                                                                 labels = self.y_visual,
-                                                                 labels_emb = self.fn_y2h(self.y_visual), 
-                                                                 cond_scale = self.cond_scale_visual,
-                                                                 rescaled_phi = self.cond_rescaled_phi_visual,
-                                                                 num_sample_steps = self.num_sample_steps, 
-                                                                 clamp = False,
-                                                                 )
-                            gen_imgs = gen_imgs.detach().cpu()
+                            sde_imgs = []
+                            for i in range(0, len(self.y_visual), bs):
+                                chunk = self.y_visual[i:i+bs]
+                                sde_imgs.append(self.ema.ema_model.sample_using_sde(
+                                    labels=chunk,
+                                    labels_emb=self.fn_y2h(chunk),
+                                    cond_scale=self.cond_scale_visual,
+                                    rescaled_phi=self.cond_rescaled_phi_visual,
+                                    num_sample_steps=self.num_sample_steps,
+                                    clamp=False,
+                                ).detach().cpu())
+                            gen_imgs = torch.cat(sde_imgs, dim=0)
                             assert gen_imgs.min()>=0 and gen_imgs.max()<=1
                             assert gen_imgs.size(1)==self.channels
                             torchvision.utils.save_image(gen_imgs.data, str(self.results_folder) + '/sample_sde_{}.png'.format(self.step), nrow=self.nrow_visual, normalize=False, padding=1)
                             
+                            torch.cuda.empty_cache()
                             #ode sampler
-                            gen_imgs = self.ema.ema_model.sample_using_ode(
-                                                                 labels = self.y_visual,
-                                                                 labels_emb = self.fn_y2h(self.y_visual), 
-                                                                 cond_scale = self.cond_scale_visual,
-                                                                 rescaled_phi = self.cond_rescaled_phi_visual,
-                                                                 num_sample_steps = self.num_sample_steps, 
-                                                                 clamp = False,
-                                                                )
-                            gen_imgs = gen_imgs.detach().cpu()
+                            ode_imgs = []
+                            for i in range(0, len(self.y_visual), bs):
+                                chunk = self.y_visual[i:i+bs]
+                                ode_imgs.append(self.ema.ema_model.sample_using_ode(
+                                    labels=chunk,
+                                    labels_emb=self.fn_y2h(chunk),
+                                    cond_scale=self.cond_scale_visual,
+                                    rescaled_phi=self.cond_rescaled_phi_visual,
+                                    num_sample_steps=self.num_sample_steps,
+                                    clamp=False,
+                                ).detach().cpu())
+                            gen_imgs = torch.cat(ode_imgs, dim=0)
                             assert gen_imgs.min()>=0 and gen_imgs.max()<=1
                             assert gen_imgs.size(1)==self.channels
                             torchvision.utils.save_image(gen_imgs.data, str(self.results_folder) + '/sample_ode_{}.png'.format(self.step), nrow=self.nrow_visual, normalize=False, padding=1)

@@ -404,6 +404,7 @@ trainer = Trainer(
         y_visual = y_visual,
         cond_scale_visual = args.sample_cond_scale,
         cond_rescaled_phi_visual = args.sample_cond_rescaled_phi,
+        visual_samp_batch_size = args.samp_batch_size,
         results_folder = save_results_folder,
         amp = args.train_amp,
         mixed_precision_type = args.train_mixed_precision,
