@@ -1,6 +1,7 @@
 # Output (generated at runtime)
 output/
 output_*.txt
+experiments_outputs/
 
 # Eval checkpoints (large .pth files)
 evaluation/eval_ckpts/
