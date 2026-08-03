@@ -55,6 +55,32 @@ bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 8 --gr
 bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 128 --grad_accum 1
 ```
 
+### Phased / resumed training across machines
+
+Training is checkpointed by **step** (not epoch). `main.py` writes `results/model-{step}.pt` every `--save_every` steps containing `{step, model, opt, ema, scaler}` — a self-contained, machine-portable snapshot. Resume with `--resume_step`, and remember **`--train_num_steps` is the TOTAL step count, not the remaining ones**.
+
+```bash
+# Phase 1 (machine A): train 0 -> 50k steps. Saves model-10000 ... model-50000.pt
+bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos \
+    --num_steps 50000 --skip_final_sampling
+
+# Phase 2 (machine B): continue 50k -> 100k.
+# 1. Copy to machine B at the SAME relative root_path:
+#      output/DRGrading_128/setup1_dr/results/model-*.pt   (diffusion checkpoints)
+#      output/DRGrading_128/model_y2h/  model_y2cov/  aux_reg_model/  (embedding nets,
+#      loaded-if-present; copy so labels stay byte-identical and aren't retrained)
+# 2. Resume with the same hyperparameters as phase 1 (lr, batch, vicinity, etc.):
+bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos \
+    --num_steps 100000 --resume_step 50000
+```
+
+Notes:
+
+- `--skip_final_sampling` ends the phase right after training, skipping the post-training sampling/`--dump_fake_data` block (wasteful + overwrites `fake_data/` on intermediate phases). Leave it off on the final phase so fake data is dumped.
+- `--resume_step` must be a multiple of `--save_every` (only those checkpoints exist).
+- Checkpoints don't store hyperparameters or RNG state; pass the same flags each phase (batch sampling is with replacement, so continuation is stochastic but correct). The resume path is single-GPU safe (scripts use `CUDA_VISIBLE_DEVICES=0`); multi-GPU resume has a DDP-wrap quirk in `trainer.load()`.
+- The loss log is named `log_loss_steps{train_num_steps}.txt`, so a changed total starts a fresh log file.
+
 ### Downstream evaluation (the primary evidence)
 
 ```bash

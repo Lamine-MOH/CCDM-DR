@@ -106,6 +106,7 @@ def parse_opts():
     parser.add_argument('--sample_cond_rescaled_phi', type=float, default=0.7)
     
     parser.add_argument('--do_eval', action='store_true', default=False)
+    parser.add_argument('--skip_final_sampling', action='store_true', default=False)
     parser.add_argument('--nfake_per_label', type=int, default=200)
     parser.add_argument('--samp_batch_size', type=int, default=100)
     parser.add_argument('--dump_fake_data', action='store_true', default=False)

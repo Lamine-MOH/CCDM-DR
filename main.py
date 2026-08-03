@@ -422,53 +422,54 @@ trainer.train()
 '''                         Sampling and evaluation                                 '''
 #######################################################################################
 
-print("\n Start sampling fake images from the model >>>")
+if not args.skip_final_sampling:
+    print("\n Start sampling fake images from the model >>>")
 
-## initialize evaluator
-evaluator = Evaluator(dataset=dataset, trainer=trainer, args=args, device=trainer.device, save_results_folder=save_results_folder) 
+    ## initialize evaluator
+    evaluator = Evaluator(dataset=dataset, trainer=trainer, args=args, device=trainer.device, save_results_folder=save_results_folder) 
 
-## initialize evaluation models, prepare for evaluation
-if args.do_eval:
-    if args.data_name in ["RC-49","RC-49_imb"]:
-        eval_data_name = "RC49"
-    else:
-        eval_data_name = args.data_name
-    conduct_import_codes = "from evaluation.eval_models.{}.metrics_{}x{} import ResNet34_class_eval, ResNet34_regre_eval, encoder".format(eval_data_name, args.image_size, args.image_size)
-    print("\r"+conduct_import_codes)
-    exec(conduct_import_codes)
-    # for FID
-    PreNetFID = encoder(dim_bottleneck=512)
-    PreNetFID = nn.DataParallel(PreNetFID)
-    # for Diversity
-    if args.data_name in ["UTKFace", "RC-49", "RC-49_imb", "SteeringAngle"]:
-        PreNetDiversity = ResNet34_class_eval(num_classes=num_classes, ngpu = torch.cuda.device_count())
-    else:
-        PreNetDiversity = None
-    # for LS
-    PreNetLS = ResNet34_regre_eval(ngpu = torch.cuda.device_count())
+    ## initialize evaluation models, prepare for evaluation
+    if args.do_eval:
+        if args.data_name in ["RC-49","RC-49_imb"]:
+            eval_data_name = "RC49"
+        else:
+            eval_data_name = args.data_name
+        conduct_import_codes = "from evaluation.eval_models.{}.metrics_{}x{} import ResNet34_class_eval, ResNet34_regre_eval, encoder".format(eval_data_name, args.image_size, args.image_size)
+        print("\r"+conduct_import_codes)
+        exec(conduct_import_codes)
+        # for FID
+        PreNetFID = encoder(dim_bottleneck=512)
+        PreNetFID = nn.DataParallel(PreNetFID)
+        # for Diversity
+        if args.data_name in ["UTKFace", "RC-49", "RC-49_imb", "SteeringAngle"]:
+            PreNetDiversity = ResNet34_class_eval(num_classes=num_classes, ngpu = torch.cuda.device_count())
+        else:
+            PreNetDiversity = None
+        # for LS
+        PreNetLS = ResNet34_regre_eval(ngpu = torch.cuda.device_count())
 
-# ## dump fake data in h5 files
-# if args.dump_fake_for_h5:
-#     path_to_h5files = os.path.join(path_to_fake_data, 'h5')
-#     os.makedirs(path_to_h5files, exist_ok=True)
-#     evaluator.dump_h5_files(output_path=path_to_h5files)
+    # ## dump fake data in h5 files
+    # if args.dump_fake_for_h5:
+    #     path_to_h5files = os.path.join(path_to_fake_data, 'h5')
+    #     os.makedirs(path_to_h5files, exist_ok=True)
+    #     evaluator.dump_h5_files(output_path=path_to_h5files)
 
-## dump for niqe computation
-if args.dump_fake_for_niqe:
-    if args.niqe_dump_path=="None":
-        dump_fake_images_folder = os.path.join(path_to_fake_data, 'png')
-    else:
-        dump_fake_images_folder = args.niqe_dump_path + '/fake_images'
-    os.makedirs(dump_fake_images_folder, exist_ok=True)
-    evaluator.dump_png_images(output_path=dump_fake_images_folder)
+    ## dump for niqe computation
+    if args.dump_fake_for_niqe:
+        if args.niqe_dump_path=="None":
+            dump_fake_images_folder = os.path.join(path_to_fake_data, 'png')
+        else:
+            dump_fake_images_folder = args.niqe_dump_path + '/fake_images'
+        os.makedirs(dump_fake_images_folder, exist_ok=True)
+        evaluator.dump_png_images(output_path=dump_fake_images_folder)
 
-## start computing evaluation metrics
-if args.do_eval:
-    now = datetime.now()
-    time_str = now.strftime("%Y-%m-%d_%H-%M-%S")
-    eval_results_path = os.path.join(save_setting_folder, "eval_{}".format(time_str))
-    os.makedirs(eval_results_path, exist_ok=True)
-    evaluator.compute_metrics(eval_results_path, PreNetFID, PreNetDiversity, PreNetLS)
+    ## start computing evaluation metrics
+    if args.do_eval:
+        now = datetime.now()
+        time_str = now.strftime("%Y-%m-%d_%H-%M-%S")
+        eval_results_path = os.path.join(save_setting_folder, "eval_{}".format(time_str))
+        os.makedirs(eval_results_path, exist_ok=True)
+        evaluator.compute_metrics(eval_results_path, PreNetFID, PreNetDiversity, PreNetLS)
 
 
 
