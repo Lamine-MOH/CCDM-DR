@@ -17,9 +17,10 @@ from the original repo isn't here.
 pip install -r requirements.txt
 
 # Option A: Download pre-built h5 files from Google Drive
-# 1. Fill in your Google Drive file IDs in .env.h5_links
+# 1. Fill in your Google Drive file IDs in .env.h5_links (pre-filled for all datasets)
 # 2. Download datasets (selectable by name and resolution)
 python data_preparation/download_h5.py --resolution 128
+python data_preparation/download_h5.py --dataset Aptos IDRiD --resolution 256
 
 # Option B: Build h5 files from raw datasets
 # 1. Download and prepare a dataset (APTOS, IDRiD, DDR, or Messidor-2)
@@ -34,19 +35,27 @@ python data_preparation/build_dr_h5.py \
 
 # 3. Train (pass ROOT_PATH and DATA_PATH as arguments)
 bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
+bash config/DR256/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
 bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
 
 # Override VRAM defaults if needed (--batch_size, --grad_accum, --samp_batch_size)
 bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 8 --grad_accum 16
 
-# 4. Evaluate: does the synthetic data actually help a DR classifier?
+# 4. Generate images from a trained checkpoint (no re-training)
+python generate_from_ckpt.py \
+    --model_ckpt output/DRGrading_128/setup1_dr/results/model-150000.pt \
+    --model_config config/model_cfg/unet_edm_128_v1.yaml \
+    --root_path . --image_size 128 \
+    --grades 0 1 2 3 4 --nfake_per_grade 1000 --out_dir output/generated
+
+# 5. Evaluate: does the synthetic data actually help a DR classifier?
 python downstream_eval/train_dr_classifier.py \
-    --real_h5 /path/DRGrading_128x128.h5 \
+    --real_h5 /path/DRGrading_128x128_train.h5 \
     --test_h5 /path/DRGrading_128x128_test.h5 \
     --backbone resnet50 --epochs 30 --run_name real_only
 
 python downstream_eval/train_dr_classifier.py \
-    --real_h5 /path/DRGrading_128x128.h5 \
+    --real_h5 /path/DRGrading_128x128_train.h5 \
     --test_h5 /path/DRGrading_128x128_test.h5 \
     --synthetic_h5 /path/to/generated.h5 --synthetic_cap_per_grade 1500 \
     --backbone resnet50 --epochs 30 --run_name real_plus_synthetic
@@ -54,8 +63,14 @@ python downstream_eval/train_dr_classifier.py \
 python downstream_eval/compare_runs.py --results_dir ./downstream_results
 ```
 
-See `AGENTS.md` for a denser command/gotcha reference, and the "eval-checkpoint
-gap" section below before you touch `--do_eval`.
+The data-preparation scripts produce `{out_dir}/{dataset}/DRGrading_{size}x{size}_train.h5`
+(train) and `DRGrading_{size}x{size}_test.h5` (held-out test) with the schema
+`images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades) — pass
+those exact `*_train.h5` / `*_test.h5` paths to the downstream-eval commands.
+
+See `AGENTS.md` for a denser command/gotcha reference, `docs/full_pipeline.md`
+for a start-to-finish walkthrough (local companion doc; gitignored), and the
+"eval-checkpoint gap" section below before you touch `--do_eval`.
 
 ## What was changed vs. upstream
 
@@ -64,11 +79,14 @@ gap" section below before you touch `--do_eval`.
 | `dataset.py` | Added a `DRGrading` branch to `LoadDataSet`. DR severity grades are discrete integers 0-4 (ICDR scale), so this reuses the same loading/minority-replication logic already written for `UTKFace` (also a small integer label set) rather than the continuous-label logic used for `SteeringAngle`/`RC-49`. Now expects `{data_path}/DRGrading_{size}x{size}_train.h5` (with `_train` suffix). |
 | `opts.py` | Added `"DRGrading"` to the `--data_name` choices. |
 | `evaluation/evaluator.py` | Added a `DRGrading` branch pointing to `./evaluation/eval_ckpts/DRGrading/...`. **These checkpoints don't exist yet** — see "The eval-checkpoint gap" below. |
-| `main.py` | **Bug fix.** Upstream unconditionally imports `evaluation/eval_models/{data_name}/metrics_{size}x{size}` right after training, regardless of `--do_eval`. That path doesn't exist for `DRGrading`, so every DR run would otherwise crash right after sampling — after the GPU time for training was already spent. This is now gated behind `if args.do_eval:` (a no-op for the original datasets). |
+| `main.py` | **Bug fix.** Upstream unconditionally imports `evaluation/eval_models/{data_name}/metrics_{size}x{size}` right after training, regardless of `--do_eval`. That path doesn't exist for `DRGrading`, so every DR run would otherwise crash right after sampling — after the GPU time for training was already spent. This is now gated behind `if args.do_eval:` (a no-op for the original datasets). Also: device handling refactored for CPU fallback. |
+| `trainer.py` | Modified: added a visual-sample batch-size parameter, removed a batch-size-divisibility assertion, guarded covariance updates against empty label sets, and CPU-fallback device handling. |
+| `label_embedding.py`, `utils.py` | Lightly modified (CPU fallback in embedding/prediction device handling). |
 | `data_preparation/get_dataset.py` | **New.** Downloads and normalizes APTOS/IDRiD/DDR/Messidor-2 into a common `{dataset}/Images/` + `labels.csv` structure. |
-| `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop). |
-| `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (gitignored). Supports `--dataset` and `--resolution` flags for selective downloads. |
-| `config/DR128/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR. |
+| `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop, optional `--clahe`), a held-out `--test_frac` split, and per-grade class-count printouts. |
+| `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed). Supports `--dataset` and `--resolution` flags for selective downloads. |
+| `config/DR128/run_train.sh`, `config/DR256/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR: 128×128 (main), 256×256 (high-res), 64×64 (fast debug). All accept `ROOT_PATH`/`DATA_PATH` positionally plus overridable `--num_steps`, `--batch_size`, `--grad_accum`, `--samp_batch_size`, `--resume_step`, `--save_every`, `--skip_final_sampling`. |
+| `generate_from_ckpt.py` | **New.** Samples a trained checkpoint without re-training or loading the training set — the diffusion weights come from `model-{step}.pt`; the label-embedding nets and training yaml must be supplied separately. Writes `generated.h5` in the same schema as the training h5, ready for `train_dr_classifier.py --synthetic_h5`. |
 | `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/EfficientNet-B4) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
 | `downstream_eval/compare_runs.py` | **New.** Summarizes multiple `train_dr_classifier.py` runs into one comparison table. |
 
@@ -100,12 +118,42 @@ following the recipe in the acknowledged upstream repo,
 [CcGAN-AVAR](https://github.com/UBCDingXin/CcGAN-AVAR) (same authors, same
 checkpoint format).
 
-Until then, **leave `--do_eval` off** (both DR configs do this by default)
+Until then, **leave `--do_eval` off** (all three DR configs do this by default)
 and use `downstream_eval/` instead. Arguably that's the more convincing
 evaluation for a DR contribution anyway: SFID tells you the generated
 images are distributionally plausible, but what actually matters is
 whether the synthetic data improves a real DR classifier — which is what
 `train_dr_classifier.py` measures directly.
+
+## Sampling from a trained checkpoint (`generate_from_ckpt.py`)
+
+`generate_from_ckpt.py` generates grade-conditioned images from a finished
+run **without re-training and without loading the full training set** —
+useful for squeezing more samples out of an existing model or for
+generating on a machine that doesn't have the h5 data.
+
+It needs three things (none of which live inside `model-{step}.pt`):
+
+- the diffusion checkpoint: `output/DRGrading_{size}/setup1_dr/results/model-{step}.pt`
+- the label-embedding nets, found by default at
+  `{root_path}/output/DRGrading_{size}/model_y2h/ckpt_mlp_y2h_epoch_500.pth` and
+  `{root_path}/output/DRGrading_{size}/model_y2cov/ckpt_cnn_y2cov_epoch_500.pth`
+  (override with `--path_y2h` / `--path_y2cov` / `--y2h_ckpt_name` / `--y2cov_ckpt_name`)
+- the exact `config/model_cfg/*.yaml` used for training
+
+```bash
+python generate_from_ckpt.py \
+    --model_ckpt output/DRGrading_128/setup1_dr/results/model-150000.pt \
+    --model_config config/model_cfg/unet_edm_128_v1.yaml \
+    --root_path . --image_size 128 \
+    --grades 0 1 2 3 4 --nfake_per_grade 1000 --out_dir output/generated
+```
+
+All CLI defaults match `config/DR128/run_train.sh`; only `--grades`,
+`--nfake_per_grade`, and `--out_dir` normally need changing. Output is
+`{out_dir}/generated.h5` (same schema as the training h5, labels as raw
+grades 0-4) plus `sample_grade_{g}.png` preview grids. `--sampler` can be
+`sde` (default, best quality), `ode`, or `dpmpp` (fastest).
 
 ## Directory map
 
@@ -114,17 +162,22 @@ CCDM-DR/
 ├── dataset.py                     # modified: + DRGrading branch (expects _train.h5)
 ├── opts.py                        # modified: + DRGrading choice
 ├── main.py                        # modified: eval-model import gated behind --do_eval (bug fix)
-├── trainer.py, diffusion.py, label_embedding.py, utils.py   # unmodified
+├── trainer.py                     # modified: visual sample batch size, robustness/device fixes
+├── diffusion.py                   # unmodified
+├── label_embedding.py, utils.py   # lightly modified (CPU fallback)
+├── generate_from_ckpt.py          # NEW: sample a trained checkpoint without re-training
 ├── models/
 │   ├── unet_edm.py, unet_ccdm.py, dit.py    # three usable backbones (unmodified)
 │   ├── resnet_y2h.py, resnet_y2cov.py, resnet_aux_regre.py, attend.py  # unmodified
 │   └── __init__.py                # modified: dropped the sngan import (file removed)
 ├── config/
-│   ├── DR64/run_train.sh          # fast-iteration 64x64 config
+│   ├── DR64/run_train.sh          # fast-iteration 64x64 debug config
 │   ├── DR128/run_train.sh         # main 128x128 config
+│   ├── DR256/run_train.sh         # high-res 256x256 config
 │   └── model_cfg/                 # 64/128/256px x {unet_edm, unet_ccdm, dit}
 ├── evaluation/
 │   ├── evaluator.py               # modified: + DRGrading branch (checkpoint gap above)
+│   ├── eval_metrics.py            # FID/IS/MMD/label-score implementations (unmodified)
 │   └── eval_models/                # empty except __init__.py -- see "What was removed"
 ├── data_preparation/
 │   ├── get_dataset.py              # download + normalize APTOS/IDRiD/DDR/Messidor-2
@@ -133,11 +186,17 @@ CCDM-DR/
 ├── downstream_eval/
 │   ├── train_dr_classifier.py     # the real vs real+synthetic experiment
 │   └── compare_runs.py
-├── .env.h5_links                 # Google Drive file IDs (commit this)
+├── notebooks/
+│   └── dataset_prepare.ipynb      # end-to-end data-prep walkthrough (Colab-friendly)
+├── .env.h5_links                  # Google Drive file IDs (committed)
 ├── requirements.txt
 ├── AGENTS.md                      # command/gotcha reference for coding agents
 └── LICENSE
 ```
+
+Note: `docs/full_pipeline.md`, a start-to-finish experiment guide, lives
+locally but is gitignored — add `docs/` to `.gitignore` exceptions if you
+want it tracked.
 
 ## Citation
 
