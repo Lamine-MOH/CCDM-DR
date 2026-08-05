@@ -36,6 +36,7 @@ Produces `{out_dir}/{dataset}/DRGrading_{size}x{size}_train.h5` (train) and `DRG
 
 ```bash
 bash config/DR128/run_train.sh    # main 128×128 config
+bash config/DR256/run_train.sh    # high-res 256×256 config
 bash config/DR64/run_train.sh     # fast-iteration 64×64 debug config
 ```
 
@@ -86,13 +87,13 @@ Notes:
 ```bash
 # Real-only baseline
 python downstream_eval/train_dr_classifier.py \
-    --real_h5 /path/DRGrading_128x128.h5 \
+    --real_h5 /path/DRGrading_128x128_train.h5 \
     --test_h5 /path/DRGrading_128x128_test.h5 \
     --backbone resnet50 --epochs 30 --run_name real_only
 
 # Real + CCDM synthetic
 python downstream_eval/train_dr_classifier.py \
-    --real_h5 /path/DRGrading_128x128.h5 \
+    --real_h5 /path/DRGrading_128x128_train.h5 \
     --test_h5 /path/DRGrading_128x128_test.h5 \
     --synthetic_h5 /path/to/generated.h5 \
     --synthetic_cap_per_grade 1500 \
@@ -122,7 +123,8 @@ python downstream_eval/compare_runs.py --results_dir ./downstream_results
 - `config/model_cfg/` — YAML configs for each model+resolution combination.
 - `data_preparation/get_dataset.py` — Downloads and normalizes DR datasets into a common structure.
 - `data_preparation/build_dr_h5.py` — Converts normalized dataset into h5 format for training.
-- `data_preparation/download_h5.py` — Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (gitignored).
+- `data_preparation/download_h5.py` — Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed).
+- `generate_from_ckpt.py` — Samples a trained checkpoint without re-training (needs `model-*.pt` + embedding nets + training yaml); writes `generated.h5` for `train_dr_classifier.py --synthetic_h5`.
 
 ## Dependencies
 
