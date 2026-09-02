@@ -37,3 +37,4 @@ env/
 .ipynb_checkpoints/
 
 docs/
+temp/
