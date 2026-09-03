@@ -160,6 +160,7 @@ def main():
     p.add_argument("--run_name", type=str, required=True)
     p.add_argument("--out_dir", type=str, default="./downstream_results")
     p.add_argument("--seed", type=int, default=111)
+    p.add_argument("--num_workers", type=int, default=2)
     args = p.parse_args()
 
     torch.manual_seed(args.seed)
@@ -185,8 +186,8 @@ def main():
 
     train_ds = DRDataset(train_images, train_labels, train=True, img_size=args.img_size)
     test_ds = DRDataset(test_images, test_labels, train=False, img_size=args.img_size)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4, drop_last=True)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
     model = build_model(args.backbone).to(device)
 
