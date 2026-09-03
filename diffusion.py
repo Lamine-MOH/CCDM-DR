@@ -347,7 +347,7 @@ class ElucidatedDiffusion(nn.Module):
             sigma_hat = sigma + gamma * sigma
             cov_diag = self.cal_cov(sigma=sigma, labels=labels, shape=shape, device=self.device, dtype=dtype, train_mode=False)
             cov_diag_hat = self.cal_cov(sigma=sigma_hat, labels=labels, shape=shape, device=self.device, dtype=dtype, train_mode=False)
-            images_hat = images + (cov_diag_hat - cov_diag).sqrt() * eps
+            images_hat = images + (cov_diag_hat - cov_diag).clamp(min=0).sqrt() * eps
 
             self_cond = x_start if self.self_condition else None
 
