@@ -40,7 +40,7 @@ bash config/DR256/run_train.sh    # high-res 256×256 config
 bash config/DR64/run_train.sh     # fast-iteration 64×64 debug config
 ```
 
-Both scripts call `python main.py` with DR-appropriate flags. Pass `ROOT_PATH` and `DATA_PATH` as positional arguments:
+All three scripts call `python main.py` with DR-appropriate flags. Pass `ROOT_PATH` and `DATA_PATH` as positional arguments:
 
 ```bash
 bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/DRGrading/Aptos
@@ -84,6 +84,10 @@ Notes:
 
 ### Downstream evaluation (the primary evidence)
 
+Supported backbones: `resnet50`, `resnet101`, `efficientnet_b3`, `efficientnet_b4`, `efficientnet_b5`, `densenet121`, `densenet201`. All use ImageNet-pretrained weights by default; pass `--no-pretrained` to train from scratch.
+
+`--synthetic_cap_per_grade N` limits synthetic samples per DR grade (0-4) before concatenation with real data. Useful for sweeping synthetic-to-real ratios.
+
 ```bash
 # Real-only baseline
 python downstream_eval/train_dr_classifier.py \
@@ -91,7 +95,7 @@ python downstream_eval/train_dr_classifier.py \
     --test_h5 /path/DRGrading_128x128_test.h5 \
     --backbone resnet50 --epochs 30 --run_name real_only
 
-# Real + CCDM synthetic
+# Real + CCDM synthetic (cap at 1500 synthetic samples per grade)
 python downstream_eval/train_dr_classifier.py \
     --real_h5 /path/DRGrading_128x128_train.h5 \
     --test_h5 /path/DRGrading_128x128_test.h5 \
@@ -102,6 +106,8 @@ python downstream_eval/train_dr_classifier.py \
 # Compare runs
 python downstream_eval/compare_runs.py --results_dir ./downstream_results
 ```
+
+Outputs per run: `{run_name}_best.pth` (best model weights by QWK) and `{run_name}_metrics.json` (accuracy, macro_f1, QWK, per-grade recall). `compare_runs.py` aggregates all `*_metrics.json` into a comparison table saved as `comparison_table.csv`.
 
 ## Critical gotchas
 
@@ -132,7 +138,7 @@ python downstream_eval/compare_runs.py --results_dir ./downstream_results
 pip install -r requirements.txt
 ```
 
-Additional DR-specific packages: `opencv-python-headless>=4.8`, `pandas>=1.5`, `scikit-learn>=1.2`. No linting, type-checking, or test framework is configured.
+Additional DR-specific packages: `opencv-python-headless>=4.8`, `pandas>=1.5`, `scikit-learn>=1.2`, `gdown>=5.0`. `ema-pytorch` is required by `generate_from_ckpt.py` (included in requirements.txt). No linting, type-checking, or test framework is configured.
 
 ## Output structure
 
