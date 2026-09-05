@@ -44,6 +44,14 @@ class LabelEmbed:
         img_size = 64,
         nc = 3, 
         batch_size = 128, 
+        epochs_cnn_embed = 200,
+        epochs_net_y2h = 500,
+        resumeepoch_cnn_embed = 0,
+        batch_size_embed = 256,
+        epochs_cnn_embed_y2cov = 10,
+        epochs_net_y2cov = 500,
+        resumeepoch_cnn_embed_y2cov = 0,
+        batch_size_embed_y2cov = 256,
         device = "cuda" if torch.cuda.is_available() else "cpu"
         ):
         
@@ -59,6 +67,14 @@ class LabelEmbed:
         self.nc = nc
         self.cov_dim = img_size**2 * nc
         self.batch_size = batch_size
+        self.epochs_cnn_embed = epochs_cnn_embed
+        self.epochs_net_y2h = epochs_net_y2h
+        self.resumeepoch_cnn_embed = resumeepoch_cnn_embed
+        self.batch_size_embed = batch_size_embed
+        self.epochs_cnn_embed_y2cov = epochs_cnn_embed_y2cov
+        self.epochs_net_y2cov = epochs_net_y2cov
+        self.resumeepoch_cnn_embed_y2cov = resumeepoch_cnn_embed_y2cov
+        self.batch_size_embed_y2cov = batch_size_embed_y2cov
         
         assert y2h_type in ['resnet', 'sinusoidal', 'gaussian']
         assert y2cov_type in ['resnet', 'sinusoidal', 'gaussian']
@@ -70,8 +86,8 @@ class LabelEmbed:
             os.makedirs(path_y2h, exist_ok=True)
 
             ## training setups
-            epochs_resnet = 10
-            epochs_mlp = 500
+            epochs_resnet = self.epochs_cnn_embed
+            epochs_mlp = self.epochs_net_y2h
             base_lr_resnet = 1e-4
             base_lr_mlp = 1e-2
             
@@ -96,7 +112,7 @@ class LabelEmbed:
             # training or loading existing ckpt
             if not os.path.isfile(resnet_y2h_filename_ckpt):
                 print("\n Start training CNN for y2h label embedding >>>")
-                model_resnet_y2h = train_resnet(net=model_resnet_y2h, net_name="resnet_y2h", trainloader=trainloader, epochs=epochs_resnet, resume_epoch = 0, lr_base=base_lr_resnet, lr_decay_factor=0.1, lr_decay_epochs=[80, 140], weight_decay=1e-4, path_to_ckpt = self.path_y2h)
+                model_resnet_y2h = train_resnet(net=model_resnet_y2h, net_name="resnet_y2h", trainloader=trainloader, epochs=epochs_resnet, resume_epoch = self.resumeepoch_cnn_embed, lr_base=base_lr_resnet, lr_decay_factor=0.1, lr_decay_epochs=[80, 140], weight_decay=1e-4, path_to_ckpt = self.path_y2h)
                 # save model
                 torch.save({
                 'net_state_dict': model_resnet_y2h.state_dict(),
@@ -112,7 +128,7 @@ class LabelEmbed:
             if not os.path.isfile(mlp_y2h_filename_ckpt):
                 print("\n Start training mlp_y2h >>>")
                 model_h2y = model_resnet_y2h.module.h2y
-                model_mlp_y2h = train_y2emb(unique_labels_norm = unique_labels_norm, model_y2emb=model_mlp_y2h, model_name="mlp_y2h", model_h2y=model_h2y, epochs=500, lr_base=base_lr_mlp, lr_decay_factor=0.1, lr_decay_epochs=[150, 250, 350], weight_decay=1e-4, batch_size=128)
+                model_mlp_y2h = train_y2emb(unique_labels_norm = unique_labels_norm, model_y2emb=model_mlp_y2h, model_name="mlp_y2h", model_h2y=model_h2y, epochs=self.epochs_net_y2h, lr_base=base_lr_mlp, lr_decay_factor=0.1, lr_decay_epochs=[150, 250, 350], weight_decay=1e-4, batch_size=self.batch_size_embed)
                 # save model
                 torch.save({
                 'net_state_dict': model_mlp_y2h.state_dict(),
@@ -161,8 +177,8 @@ class LabelEmbed:
             os.makedirs(path_y2cov, exist_ok=True)
             
             ## training setups
-            epochs_resnet = 10
-            epochs_y2cov = 500
+            epochs_resnet = self.epochs_cnn_embed_y2cov
+            epochs_y2cov = self.epochs_net_y2cov
             base_lr_resnet = 1e-4
             base_lr_y2cov = 1e-3
             
@@ -191,7 +207,7 @@ class LabelEmbed:
             # training or loading existing ckpt
             if not os.path.isfile(resnet_y2cov_filename_ckpt):
                 print("\n Start training CNN for y2cov label embedding >>>")
-                model_resnet_y2cov = train_resnet(net=model_resnet_y2cov, net_name="resnet_y2cov", trainloader=trainloader, epochs=epochs_resnet, resume_epoch = 0, lr_base=base_lr_resnet, lr_decay_factor=0.1, lr_decay_epochs=[80, 140], weight_decay=1e-4, path_to_ckpt = self.path_y2cov)
+                model_resnet_y2cov = train_resnet(net=model_resnet_y2cov, net_name="resnet_y2cov", trainloader=trainloader, epochs=epochs_resnet, resume_epoch = self.resumeepoch_cnn_embed_y2cov, lr_base=base_lr_resnet, lr_decay_factor=0.1, lr_decay_epochs=[80, 140], weight_decay=1e-4, path_to_ckpt = self.path_y2cov)
                 # save model
                 torch.save({
                 'net_state_dict': model_resnet_y2cov.state_dict(),
@@ -207,7 +223,7 @@ class LabelEmbed:
             if not os.path.isfile(y2emb_y2cov_filename_ckpt):
                 print("\n Start training y2emb_y2cov >>>")
                 model_h2y = model_resnet_y2cov.module.h2y
-                model_y2emb_y2cov = train_y2emb(unique_labels_norm = unique_labels_norm, model_y2emb=model_y2emb_y2cov, model_name="{}_y2cov".format(self.y2cov_y2emb_type), model_h2y=model_h2y, epochs=500, lr_base=base_lr_y2cov, lr_decay_factor=0.1, lr_decay_epochs=[150, 250, 350], weight_decay=1e-4, batch_size=128)
+                model_y2emb_y2cov = train_y2emb(unique_labels_norm = unique_labels_norm, model_y2emb=model_y2emb_y2cov, model_name="{}_y2cov".format(self.y2cov_y2emb_type), model_h2y=model_h2y, epochs=self.epochs_net_y2cov, lr_base=base_lr_y2cov, lr_decay_factor=0.1, lr_decay_epochs=[150, 250, 350], weight_decay=1e-4, batch_size=self.batch_size_embed_y2cov)
                 # save model
                 torch.save({
                 'net_state_dict': model_y2emb_y2cov.state_dict(),

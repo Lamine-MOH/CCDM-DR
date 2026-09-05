@@ -185,7 +185,7 @@ class AttentionOp(torch.autograd.Function):
 
 class UNetBlock(torch.nn.Module):
     def __init__(self,
-        in_channels, out_channels, emb_channels, up=False, down=False, attention=False,
+        in_channels, out_channels, emb_channels, cond_emb_channels=None, up=False, down=False, attention=False,
         num_heads=None, channels_per_head=64, dropout=0, skip_scale=1, eps=1e-5,
         resample_filter=[1,1], resample_proj=False, adaptive_scale=True,
         init=dict(), init_zero=dict(init_weight=0), init_attn=None,
@@ -202,6 +202,10 @@ class UNetBlock(torch.nn.Module):
         self.norm0 = GroupNorm(num_channels=in_channels, eps=eps)
         self.conv0 = Conv2d(in_channels=in_channels, out_channels=out_channels, kernel=3, up=up, down=down, resample_filter=resample_filter, **init)
         self.affine = Linear(in_features=emb_channels, out_features=out_channels*(2 if adaptive_scale else 1), **init)
+        if cond_emb_channels is not None:
+            self.affine_cond = Linear(in_features=cond_emb_channels, out_features=out_channels*(2 if adaptive_scale else 1), **init)
+        else:
+            self.affine_cond = None
         self.norm1 = GroupNorm(num_channels=out_channels, eps=eps)
         self.conv1 = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel=3, **init_zero)
 
@@ -215,11 +219,13 @@ class UNetBlock(torch.nn.Module):
             self.qkv = Conv2d(in_channels=out_channels, out_channels=out_channels*3, kernel=1, **(init_attn if init_attn is not None else init))
             self.proj = Conv2d(in_channels=out_channels, out_channels=out_channels, kernel=1, **init_zero)
 
-    def forward(self, x, emb):
+    def forward(self, x, emb, cond_emb=None):
         orig = x
         x = self.conv0(silu(self.norm0(x)))
 
         params = self.affine(emb).unsqueeze(2).unsqueeze(3).to(x.dtype)
+        if self.affine_cond is not None and cond_emb is not None:
+            params = params + self.affine_cond(cond_emb).unsqueeze(2).unsqueeze(3).to(x.dtype)
         if self.adaptive_scale:
             scale, shift = params.chunk(chunks=2, dim=1)
             x = silu(torch.addcmul(shift, self.norm1(x), scale + 1))
@@ -298,7 +304,7 @@ class UNet_EDM(torch.nn.Module):
         emb_channels = model_channels * channel_mult_emb
         init = dict(init_mode='kaiming_uniform', init_weight=np.sqrt(1/3), init_bias=np.sqrt(1/3))
         init_zero = dict(init_mode='kaiming_uniform', init_weight=0, init_bias=0)
-        block_kwargs = dict(emb_channels=emb_channels, channels_per_head=64, dropout=dropout, init=init, init_zero=init_zero)
+        block_kwargs = dict(emb_channels=emb_channels//2, cond_emb_channels=emb_channels//2, channels_per_head=64, dropout=dropout, init=init, init_zero=init_zero)
         
         self.self_condition = self_condition #not used. for compatibility only
         
@@ -394,13 +400,13 @@ class UNet_EDM(torch.nn.Module):
             
         c_emb = self.cond_map(labels_emb)
         
-        # concatenate time and cond embedding 
-        emb = torch.cat([t_emb, c_emb], dim=1)
+        emb = t_emb
+        cond_emb = c_emb
         
         # Encoder.
         skips = []
         for block in self.enc.values():
-            x = block(x, emb) if isinstance(block, UNetBlock) else block(x)
+            x = block(x, emb, cond_emb) if isinstance(block, UNetBlock) else block(x)
             skips.append(x)
 
         if return_bottleneck:
@@ -410,7 +416,7 @@ class UNet_EDM(torch.nn.Module):
         for block in self.dec.values():
             if x.shape[1] != block.in_channels:
                 x = torch.cat([x, skips.pop()], dim=1)
-            x = block(x, emb)
+            x = block(x, emb, cond_emb)
         x = self.out_conv(silu(self.out_norm(x)))
         return x
     

@@ -59,7 +59,9 @@ python main.py \
     --model_config "./config/model_cfg/unet_edm_128_v1.yaml" \
     --y2h_embed_type "resnet" \
     --use_y2cov --y2cov_hy_weight_train 0.05 --y2cov_hy_weight_test 0.05 --y2cov_embed_type "resnet" --net_embed_y2cov_y2emb "cnn" \
-    --train_num_steps $NUM_STEPS --resume_step $RESUME_STEP --train_lr 1e-5 \
+    --epoch_cnn_embed 200 --epoch_cnn_embed_y2cov 200 --epoch_net_y2h 500 --epoch_net_y2cov 500 \
+    --batch_size_embed 256 --batch_size_embed_y2cov 256 \
+    --train_num_steps $NUM_STEPS --resume_step $RESUME_STEP --train_lr 1e-4 \
     --train_batch_size $BATCH_SIZE --gradient_accumulate_every $GRAD_ACCUM \
     --train_amp --train_mixed_precision fp16 \
     --kernel_sigma $SIGMA --threshold_type $TYPE --kappa $KAPPA \

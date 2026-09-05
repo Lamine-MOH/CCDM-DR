@@ -273,6 +273,14 @@ label_embedding = LabelEmbed(
                     img_size = args.image_size,
                     nc = args.num_channels, 
                     batch_size = 128, 
+                    epochs_cnn_embed = args.epoch_cnn_embed,
+                    epochs_net_y2h = args.epoch_net_y2h,
+                    resumeepoch_cnn_embed = args.resumeepoch_cnn_embed,
+                    batch_size_embed = args.batch_size_embed,
+                    epochs_cnn_embed_y2cov = args.epoch_cnn_embed_y2cov,
+                    epochs_net_y2cov = args.epoch_net_y2cov,
+                    resumeepoch_cnn_embed_y2cov = args.resumeepoch_cnn_embed_y2cov,
+                    batch_size_embed_y2cov = args.batch_size_embed_y2cov,
                     device = "cuda" if torch.cuda.is_available() else "cpu",
                     )
 fn_y2h = label_embedding.fn_y2h
