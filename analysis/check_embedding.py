@@ -16,9 +16,13 @@ Usage:
 
 import argparse
 import os
+import sys
 
 import numpy as np
 import torch
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, REPO_ROOT)
 
 from models.resnet_y2h import ResNet34_embed_y2h, model_y2h
 
