@@ -132,7 +132,7 @@ Outputs per run: `{run_name}_best.pth` (best model weights by QWK) and `{run_nam
 - `data_preparation/get_dataset.py` — Downloads and normalizes DR datasets into a common structure.
 - `data_preparation/build_dr_h5.py` — Converts normalized dataset into h5 format for training.
 - `data_preparation/download_h5.py` — Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed).
-- `generate_from_ckpt.py` — Samples a trained checkpoint without re-training (needs `model-*.pt` + embedding nets + training yaml); writes `generated.h5` for `train_dr_classifier.py --synthetic_h5`.
+- `generate_from_ckpt.py` — Samples a trained checkpoint without re-training (needs `model-*.pt` + embedding nets + training yaml); writes `generated.h5` for `train_dr_classifier.py --synthetic_h5`. `--out_dir` defaults to `output/generated_cs{cond_scale}`, and the h5 stores generation attrs (`cond_scale`, `model_ckpt`, `sampler`, ...) so a generated set is self-describing.
 
 ## Dependencies
 

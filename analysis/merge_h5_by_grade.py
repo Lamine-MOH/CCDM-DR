@@ -5,6 +5,8 @@ re-assembles those files so each grade is sourced from a different scale, e.g.
 grades 0,1,4 @ CFG4 and grades 2,3 @ CFG6, matching the per-grade CFG that
 maximized downstream per-class recall. Schema is identical to
 generate_from_ckpt.py: images uint8 N x 3 x H x W, labels float64 raw grades 0-4.
+Source files generated after the attrs change carry a `cond_scale` h5 attribute
+which this script prints per source (old files print `?`).
 
 Usage:
     python analysis/merge_h5_by_grade.py --sources \
@@ -57,8 +59,10 @@ def main():
         path = mapping[grade]
         if path not in cache:
             with h5py.File(path, "r") as f:
-                cache[path] = (f["images"][:], f["labels"][:])
-        images, labels = cache[path]
+                cache[path] = (f["images"][:], f["labels"][:], dict(f.attrs))
+        images, labels, attrs = cache[path]
+        tag = attrs.get("cond_scale", "?")
+        print("  source: {} (cond_scale={})".format(path, tag))
         idx = np.where(np.round(labels) == grade)[0]
         if len(idx) == 0:
             raise ValueError("grade {} not present in {}".format(grade, path))

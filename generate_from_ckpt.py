@@ -14,7 +14,8 @@ label-embedding networks or the sigma_data setting, so this script also needs:
   - the exact config/model_cfg/*.yaml used for training
 
 All CLI defaults match config/DR128/run_train.sh. Only --grades, --nfake_per_grade
-and --out_dir normally need changing.
+and --cond_scale normally need changing; --out_dir defaults to
+`output/generated_cs{cond_scale}` and the h5 stores its generation attrs.
 
 Output: `{out_dir}/generated.h5` with the SAME schema as the training h5
 (images: uint8, N x 3 x H x W; labels: float64, raw grades 0-4), so it feeds
@@ -26,7 +27,8 @@ Example:
       --model_ckpt output/DRGrading_128/setup1_dr/results/model-150000.pt \
       --model_config config/model_cfg/unet_edm_128_v1.yaml \
       --root_path . --image_size 128 \
-      --grades 0 1 2 3 4 --nfake_per_grade 1000 --out_dir output/generated
+      --grades 0 1 2 3 4 --nfake_per_grade 1000 --cond_scale 4
+  (default out_dir is output/generated_cs4; pass --out_dir to override)
 """
 
 import argparse
@@ -103,12 +105,16 @@ def parse_args():
     p.add_argument("--grades", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     p.add_argument("--nfake_per_grade", type=int, default=1000)
     p.add_argument("--batch_size", type=int, default=100)
-    p.add_argument("--out_dir", type=str, default="output/generated")
+    p.add_argument("--out_dir", type=str, default=None,
+                   help="output dir (default: output/generated_cs{cond_scale})")
     p.add_argument("--out_name", type=str, default="generated.h5")
 
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 
-    return p.parse_args()
+    args = p.parse_args()
+    if args.out_dir is None:
+        args.out_dir = "output/generated_cs{}".format(args.cond_scale)
+    return args
 
 
 def build_sigma_data_fn(default_val):
@@ -336,6 +342,11 @@ def main():
 
     out_h5 = os.path.join(args.out_dir, args.out_name)
     with h5py.File(out_h5, "w") as f:
+        f.attrs["cond_scale"] = args.cond_scale
+        f.attrs["model_ckpt"] = args.model_ckpt
+        f.attrs["max_label"] = args.max_label
+        f.attrs["sampler"] = args.sampler
+        f.attrs["num_sample_steps"] = args.num_sample_steps
         f.create_dataset("images", data=images, dtype="uint8", compression="gzip", compression_opts=6)
         f.create_dataset("labels", data=labels, dtype="float64")
     print(" Saved {}\n".format(out_h5))
