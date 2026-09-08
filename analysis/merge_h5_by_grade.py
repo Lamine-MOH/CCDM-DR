@@ -59,17 +59,23 @@ def main():
         path = mapping[grade]
         if path not in cache:
             with h5py.File(path, "r") as f:
-                cache[path] = (f["images"][:], f["labels"][:], dict(f.attrs))
-        images, labels, attrs = cache[path]
+                rank = f["rank"][:] if "rank" in f else None
+                cache[path] = (f["images"][:], f["labels"][:], dict(f.attrs), rank)
+        images, labels, attrs, rank = cache[path]
         tag = attrs.get("cond_scale", "?")
-        print("  source: {} (cond_scale={})".format(path, tag))
+        print("  source: {} (cond_scale={}{})".format(
+            path, tag, ", rank-ordered" if rank is not None else ""))
         idx = np.where(np.round(labels) == grade)[0]
         if len(idx) == 0:
             raise ValueError("grade {} not present in {}".format(grade, path))
         cap = cap_override.get(grade, args.cap)
         if len(idx) > cap:
-            rng = np.random.RandomState(args.seed + grade)
-            idx = idx[rng.permutation(len(idx))[:cap]]
+            if rank is not None:
+                # top-cap by the filter's winning likelihood (desc).
+                idx = idx[np.argsort(-rank[idx], kind="stable")[:cap]]
+            else:
+                rng = np.random.RandomState(args.seed + grade)
+                idx = idx[rng.permutation(len(idx))[:cap]]
         images_out.append(images[idx])
         n_taken = len(idx)
         labels_out.append(np.full(n_taken, grade, dtype=np.float64))
