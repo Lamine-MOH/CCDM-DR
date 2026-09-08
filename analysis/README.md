@@ -51,7 +51,79 @@ Legacy h5 files (written before generate_from_ckpt.py stored attrs) print
 `cond_scale=?`; stamp their provenance with `analysis/tag_h5.py --h5 <path>
 --cond_scale <cs> --max_label 4` so blends stay self-describing.
 
-### `seed_report.py` — seed-robust metric aggregation
+If a source file carries a float64 `rank` dataset (written by
+`filter_synthetic.py`), the per-grade cap is filled with the **top-k by rank**
+instead of a random subsample — so a filtered pool's most-confident survivors
+are the ones that land in the blend.
+
+## Batch A — post-hoc synthetic quality & classifier upgrades (no generator retrain)
+
+Three scripts implement the literature-driven experiments of
+`docs_private/LITERATURE_REVIEW.md` (A1/A2/C9).
+
+### `filter_synthetic.py` — semantic filter of the generated pool (A1)
+
+MICCAI 2025 (ECC_DM_for_DR) idea on our pool: score every generated image with
+trained real-data classifiers; keep samples whose **max-likelihood member**
+predicts the target grade, ranked by that likelihood; optional dHash
+near-duplicate removal:
+
+```bash
+python analysis/filter_synthetic.py \
+    --sources output/generated_cfg4/generated.h5 output/generated_cs1.5/generated.h5 \
+    --ckpts densenet121=downstream_results/real_only_s111_best.pth \
+            resnet50=downstream_results/real_only_r50_s111_best.pth \
+    --out_dir output/filtered --img_size 128 --batch_size 32
+```
+
+Writes per source `{base}_filtered.h5` (with `rank`), `{base}_scores.npz`, and
+`filter_pass_rate.csv` — the per-grade pass-rate table ("how many synthetics
+survive an ensemble of real-trained graders"). Feed the filtered h5 into
+`merge_h5_by_grade.py` (rank-aware now) to build a filtered blend.
+
+Needs the classifier **scoring mode**:
+```bash
+python downstream_eval/train_dr_classifier.py \
+    --score_h5 output/generated_cfg4/generated.h5 \
+    --ckpt downstream_results/real_only_s111_best.pth \
+    --backbone densenet121 --run_name score_cfg4
+```
+(no training; writes `{score_h5base}_scores_{run_name}.csv`, plus `_probs_*.npz`
+with `--score_save_probs`).
+
+### `lesion_audit.py` — quantitative realism audit (A2)
+
+Replaces eyeball montages with per-grade numbers (high-frequency ratio = the
+"airbrushed" metric, edge energy, local noise, redness) and, with `--ckpt`, a
+true-class Grad-CAM "lesion presence" curve:
+
+```bash
+python analysis/lesion_audit.py \
+    --real data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
+    --sets output/generated_cfg4/generated.h5 output/generated_cs1.5/generated.h5 \
+           output/generated_blendA/generated.h5 \
+    --ckpt downstream_results/real_only_s111_best.pth --backbone densenet121 \
+    --out_dir output/audit
+```
+
+### New classifier backbones (C9)
+
+`train_dr_classifier.py --backbone` additionally accepts
+`vit_base_patch14_dinov2` (timm, SSL-initialized) and `swin_large`.
+
+### Protocol runner for a filtered blend
+
+`run_downstream_protocol.sh` accepts `BLEND_H5` and a per-run `SYNTH_TAG` so a
+filtered blend gets distinct run names and can reuse the frozen real-only rows:
+
+```bash
+SYNTH_TAG=blendA_filt BLEND_H5=output/generated_blendA_filt/generated.h5 \
+bash analysis/run_downstream_protocol.sh densenet121 blendA_filt \
+    data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
+    data/DRGrading/Aptos/DRGrading_128x128_test.h5
+```
+
+## `seed_report.py` — seed-robust metric aggregation
 
 Groups `*_metrics.json` by protocol and prints **mean ± std** per metric plus
 index-aligned paired deltas (with same-sign counts), so the seed-sensitivity of
