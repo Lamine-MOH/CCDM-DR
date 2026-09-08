@@ -2,6 +2,17 @@
 
 **Status: frozen** (DONE). These are the canonical numbers for the contribution.
 
+## How this was reached
+
+Conditioning fixes (dedicated per-block `affine_cond` for label embeddings,
+decoupled from time; embedding encoders trained 200 epochs, not 10) →
+retrained the model 0→50k→**100k steps** → A1 trace showed conditioning
+"flows but is weak" → E1 (embedding health, PASS) + E2 (CFG sweep, separation
+rises with cond_scale) showed the signal is **expressible but under-amplified
+at CFG 1.5** → per-grade CFG selection (grades 0/1/4 @4.0, grades 2/3 @1.5,
+grade 4 real-only) → 5-seed downstream validation below. No `aux_reg_loss` and
+no further diffusion training were needed.
+
 ## Protocol
 
 - Downstream classifier: `densenet121`, ImageNet-pretrained, 30 epochs,
@@ -63,6 +74,36 @@ synthetic scale beat real-only grade-4 recall.
   consistently positive; g1 and g3 flip sign and should not be claimed.
 - Do **not** report single-seed per-grade "rescues" (e.g. earlier exploratory
   g3=0.594): they do not survive seed validation.
+
+## Model & training provenance (`model-100000.pt`)
+
+Source checkpoint: `output/DRGrading_128/setup1_dr/results/model-100000.pt`
+(EMA weights restored at sampling time). Trained on
+`data/DRGrading/Aptos/DRGrading_128x128_train.h5` in two phases via
+`config/DR128/run_train.sh` (UNet-EDM 128×128, `--train_lr 1e-4`):
+
+```bash
+# Phase 1: 0 -> 50k
+bash config/DR128/run_train.sh /home/jovyan/CCDM-DR /home/jovyan/CCDM-DR/data/DRGrading/Aptos \
+    --num_steps 50000 --skip_final_sampling
+# Phase 2: 50k -> 100k
+bash config/DR128/run_train.sh /home/jovyan/CCDM-DR /home/jovyan/CCDM-DR/data/DRGrading/Aptos \
+    --num_steps 100000 --resume_step 50000
+```
+
+Embedding nets trained by the same runs:
+`output/DRGrading_128/model_y2h/ckpt_{resnet,mlp}_y2h_epoch_{200,500}.pth`,
+`model_y2cov/ckpt_{cnn,net}_y2cov_epoch_{200,500}.pth` — labels must stay
+byte-identical, so copy them alongside the diffusion checkpoints when moving
+machines (see `AGENTS.md` phased-resume notes).
+
+Notes:
+- `--num_steps` is the TOTAL step count, not the remaining one;
+  `--resume_step` must be a multiple of `--save_every`.
+- A changed `--num_steps` restarts the loss log
+  (`results/log_loss_steps{train_num_steps}.txt`).
+- Final loss plateaued ~0.004; no third phase was run (flat loss + saturated
+  downstream results).
 
 ## Regeneration
 

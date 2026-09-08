@@ -43,10 +43,11 @@ bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 8 --gr
 
 # 4. Generate images from a trained checkpoint (no re-training)
 python generate_from_ckpt.py \
-    --model_ckpt output/DRGrading_128/setup1_dr/results/model-150000.pt \
+    --model_ckpt output/DRGrading_128/setup1_dr/results/model-100000.pt \
     --model_config config/model_cfg/unet_edm_128_v1.yaml \
     --root_path . --image_size 128 \
-    --grades 0 1 2 3 4 --nfake_per_grade 1000 --out_dir output/generated
+    --grades 0 1 2 3 4 --nfake_per_grade 1000 --cond_scale 4
+# (out_dir defaults to output/generated_cs4; the h5 stores its generation attrs)
 
 # 5. Evaluate: does the synthetic data actually help a DR classifier?
 python downstream_eval/train_dr_classifier.py \
@@ -61,6 +62,8 @@ python downstream_eval/train_dr_classifier.py \
     --backbone resnet50 --epochs 30 --run_name real_plus_synthetic
 
 python downstream_eval/compare_runs.py --results_dir ./downstream_results
+# Frozen 5-seed protocol & results: docs/DOWNSTREAM_RESULTS.md
+# (analysis/seed_report.py aggregates per-seed *_metrics.json into mean ± std)
 ```
 
 The data-preparation scripts produce `{out_dir}/{dataset}/DRGrading_{size}x{size}_train.h5`
@@ -68,9 +71,14 @@ The data-preparation scripts produce `{out_dir}/{dataset}/DRGrading_{size}x{size
 `images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades) — pass
 those exact `*_train.h5` / `*_test.h5` paths to the downstream-eval commands.
 
-See `AGENTS.md` for a denser command/gotcha reference, `docs/full_pipeline.md`
-for a start-to-finish walkthrough (local companion doc; gitignored), and the
-"eval-checkpoint gap" section below before you touch `--do_eval`.
+The frozen 5-seed downstream experiment (protocol, mean±std table, blendA
+provenance, regeneration commands) is in `docs/DOWNSTREAM_RESULTS.md`.
+
+See `AGENTS.md` for a denser command/gotcha reference, and the
+"eval-checkpoint gap" section below before you touch `--do_eval`. A
+start-to-finish walkthrough lives in `docs/full_pipeline.md`, and the private
+retrain-from-scratch memo in `docs_private/RETRAIN_GUIDE.md` (local companion
+docs, not needed for reproducing the published results).
 
 ## What was changed vs. upstream
 
@@ -86,9 +94,10 @@ for a start-to-finish walkthrough (local companion doc; gitignored), and the
 | `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop, optional `--clahe`), a held-out `--test_frac` split, and per-grade class-count printouts. |
 | `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed). Supports `--dataset` and `--resolution` flags for selective downloads. |
 | `config/DR128/run_train.sh`, `config/DR256/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR: 128×128 (main), 256×256 (high-res), 64×64 (fast debug). All accept `ROOT_PATH`/`DATA_PATH` positionally plus overridable `--num_steps`, `--batch_size`, `--grad_accum`, `--samp_batch_size`, `--resume_step`, `--save_every`, `--skip_final_sampling`. |
-| `generate_from_ckpt.py` | **New.** Samples a trained checkpoint without re-training or loading the training set — the diffusion weights come from `model-{step}.pt`; the label-embedding nets and training yaml must be supplied separately. Writes `generated.h5` in the same schema as the training h5, ready for `train_dr_classifier.py --synthetic_h5`. |
-| `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/EfficientNet-B4) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
+| `generate_from_ckpt.py` | **New.** Samples a trained checkpoint without re-training or loading the training set — the diffusion weights come from `model-{step}.pt`; the label-embedding nets and training yaml must be supplied separately. Writes `generated.h5` in the same schema as the training h5, ready for `train_dr_classifier.py --synthetic_h5`. `--out_dir` defaults to `output/generated_cs{cond_scale}` and the h5 stores its generation attrs (`cond_scale`, `model_ckpt`, ...) so a generated set is self-describing. |
+| `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/101, EfficientNet-B3..B5, DenseNet121/201) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
 | `downstream_eval/compare_runs.py` | **New.** Summarizes multiple `train_dr_classifier.py` runs into one comparison table. |
+| `analysis/` | **New.** Post-training diagnostics and downstream helpers: `trace_conditioning.py` (A1 grade-separability trace), `render_inspection_montages.py` (A3 per-grade montages), `run_diagnosis.sh`, `check_embedding.py` (E1), `sweep_cond_scale.py` (E2 CFG sweep, includes previews), `merge_h5_by_grade.py` (per-grade blend across CFG scales), `tag_h5.py` (stamp generation attrs on legacy h5s), `seed_report.py` (mean±std aggregation across classifier seeds). See `analysis/README.md`. |
 
 ## What was removed vs. upstream
 
@@ -143,17 +152,25 @@ It needs three things (none of which live inside `model-{step}.pt`):
 
 ```bash
 python generate_from_ckpt.py \
-    --model_ckpt output/DRGrading_128/setup1_dr/results/model-150000.pt \
+    --model_ckpt output/DRGrading_128/setup1_dr/results/model-100000.pt \
     --model_config config/model_cfg/unet_edm_128_v1.yaml \
     --root_path . --image_size 128 \
-    --grades 0 1 2 3 4 --nfake_per_grade 1000 --out_dir output/generated
+    --grades 0 1 2 3 4 --nfake_per_grade 1000 --cond_scale 4
 ```
 
 All CLI defaults match `config/DR128/run_train.sh`; only `--grades`,
-`--nfake_per_grade`, and `--out_dir` normally need changing. Output is
+`--nfake_per_grade`, and `--cond_scale` normally need changing. `--out_dir`
+defaults to `output/generated_cs{cond_scale}` (pass `--out_dir` to override),
+and the output h5 stores its generation attrs (`cond_scale`, `model_ckpt`,
+`sampler`, ...) so a generated set is self-describing. Output is
 `{out_dir}/generated.h5` (same schema as the training h5, labels as raw
 grades 0-4) plus `sample_grade_{g}.png` preview grids. `--sampler` can be
 `sde` (default, best quality), `ode`, or `dpmpp` (fastest).
+
+The canonical frozen pipeline picks different CFG strengths per grade
+(grades 0/1/4 at cond_scale 4, grades 2/3 at 1.5, grade 4 real-only), assembled
+with `analysis/merge_h5_by_grade.py` into a blend h5 — see
+`docs/DOWNSTREAM_RESULTS.md` for the exact recipe and results.
 
 ## Directory map
 
@@ -186,17 +203,25 @@ CCDM-DR/
 ├── downstream_eval/
 │   ├── train_dr_classifier.py     # the real vs real+synthetic experiment
 │   └── compare_runs.py
+├── analysis/
+│   ├── trace_conditioning.py, render_inspection_montages.py, run_diagnosis.sh
+│   ├── check_embedding.py, sweep_cond_scale.py   # E1/E2 conditioning probes
+│   ├── merge_h5_by_grade.py, tag_h5.py, seed_report.py
+│   └── README.md                                 # diagnostics usage + thresholds
 ├── notebooks/
 │   └── dataset_prepare.ipynb      # end-to-end data-prep walkthrough (Colab-friendly)
+├── docs/
+│   ├── DOWNSTREAM_RESULTS.md      # frozen 5-seed downstream experiment (tracked)
+│   └── full_pipeline.md           # start-to-finish walkthrough
 ├── .env.h5_links                  # Google Drive file IDs (committed)
 ├── requirements.txt
 ├── AGENTS.md                      # command/gotcha reference for coding agents
 └── LICENSE
 ```
 
-Note: `docs/full_pipeline.md`, a start-to-finish experiment guide, lives
-locally but is gitignored — add `docs/` to `.gitignore` exceptions if you
-want it tracked.
+Note: `docs/` is tracked (`DOWNSTREAM_RESULTS.md` + `full_pipeline.md`). Private
+working notes (e.g. `docs_private/RETRAIN_GUIDE.md`, a retrain-from-scratch
+memo for the owner) live in `docs_private/`, which is gitignored.
 
 ## Citation
 
