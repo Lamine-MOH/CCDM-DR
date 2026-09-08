@@ -34,6 +34,22 @@ python analysis/sweep_cond_scale.py \
   `output/DRGrading_128/aux_reg_model/ckpt_resnet18_epoch_200.pth`, then
   resume with `--use_aux_reg_loss`) and bump `--sample_cond_scale` to 3-4.
 
+### `merge_h5_by_grade.py` — per-grade blend of per-scale h5 files
+
+When different grades prefer different CFG strengths (per-class downstream
+recall), assemble one h5 where each grade comes from a different generated set:
+
+```bash
+python analysis/merge_h5_by_grade.py --sources \
+    "0=output/generated_cfg4/generated.h5 1=output/generated_cfg4/generated.h5 \
+     2=output/generated_cfg6/generated.h5 3=output/generated_cfg6/generated.h5 \
+     4=output/generated_cfg4/generated.h5" \
+    --out output/generated_blend/generated.h5 --cap 1000
+```
+
+Optional per-grade cap override: `--caps_override "4=500"`. Output uses the same
+`images`(uint8 CHW)/`labels`(float64) schema, ready for `--synthetic_h5`.
+
 ## A1 — `trace_conditioning.py` (teaching-signal tracer)
 
 Splits every `results/sample_{ode,sde}_<step>.png` grid into its 10×10 cells
