@@ -31,14 +31,14 @@ Source model: `output/DRGrading_128/setup1_dr/results/model-100000.pt`
 | grade | source h5 | cond_scale |
 |---|---|---|
 | 0, 1, 4 | `output/generated_cfg4/generated.h5` | 4.0 |
-| 2, 3 | `output/generated/generated.h5` (legacy, attr-tagged) | 1.5 |
+| 2, 3 | `output/generated_cs1.5/generated.h5` (legacy, attr-tagged) | 1.5 |
 
 Assembled with:
 
 ```bash
 python analysis/merge_h5_by_grade.py --sources \
     "0=output/generated_cfg4/generated.h5 1=output/generated_cfg4/generated.h5 \
-     2=output/generated/generated.h5 3=output/generated/generated.h5 \
+     2=output/generated_cs1.5/generated.h5 3=output/generated_cs1.5/generated.h5 \
      4=output/generated_cfg4/generated.h5" \
     --out output/generated_blendA/generated.h5 \
     --cap 1000 --caps_override "4=0"
@@ -74,6 +74,40 @@ synthetic scale beat real-only grade-4 recall.
   consistently positive; g1 and g3 flip sign and should not be claimed.
 - Do **not** report single-seed per-grade "rescues" (e.g. earlier exploratory
   g3=0.594): they do not survive seed validation.
+
+## Second-backbone robustness check (resnet50)
+
+Same frozen protocol with only `--backbone resnet50` (seeds 111–115, real-only
++ blendA at `--synthetic_cap_per_grade 1000`), run via
+`analysis/run_downstream_protocol.sh resnet50 r50 ...`.
+
+| metric | real-only | real + synth | delta (paired) |
+|---|---|---|---|
+| accuracy | 0.8215 ± 0.0117 | 0.8299 ± 0.0058 | +0.0084 ± 0.0140 (+3/−1) |
+| macro-F1 | 0.6831 ± 0.0134 | 0.6870 ± 0.0186 | +0.0038 ± 0.0265 (+4/−1) |
+| QWK | 0.8996 ± 0.0079 | 0.9036 ± 0.0058 | +0.0040 ± 0.0088 (+3/−2) |
+| recall g0 | 0.9886 ± 0.0027 | 0.9848 ± 0.0213 | −0.0038 ± 0.0217 (+3/−1) |
+| recall g1 | 0.5967 ± 0.0447 | 0.5667 ± 0.0540 | **−0.0300 ± 0.0139 (0/−5)** |
+| recall g2 | 0.7513 ± 0.0557 | 0.8118 ± 0.0350 | **+0.0605 ± 0.0627 (+4/−0)** |
+| recall g3 | 0.4313 ± 0.0895 | 0.3812 ± 0.1114 | −0.0500 ± 0.1633 (+2/−2) |
+| recall g4 | 0.6476 ± 0.0543 | 0.6429 ± 0.0168 | −0.0048 ± 0.0616 (+1/−3) |
+
+Interpretation:
+
+- **Positive-on-average but not seed-clean.** All three core metrics improve on
+  average, but agreement is only 3–4 of 5 seeds (vs densenet's +5/−0), so this
+  is **not** evidence of a uniform cross-backbone gain.
+- **Consistent where it matters most:** grade-2 recall (+0.060, +4/−0) and
+  macro-F1 (+4/−1) improve; grade-3 is unchanged noise, as on densenet.
+- **Backbone-dependent per-grade effects:** grade-1 recall reliably *worsens*
+  (0/−5) on resnet50 (flat on densenet); grade-4 gain does not transfer
+  (densenet +0.081 vs −0.005 here).
+- Seed variance still drops for accuracy and QWK, slightly rises for macro-F1.
+- **Bottom line for the paper:** the headline stays densenet121 (frozen,
+  +5/−0). The resnet50 check is honest secondary evidence that the effect is
+  positive-on-average but architecture-sensitive — a limitations sentence, and
+  a 3rd backbone or a larger test set are the natural follow-ups if
+  cross-backbone robustness is claimed.
 
 ## Model & training provenance (`model-100000.pt`)
 

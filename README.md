@@ -72,7 +72,9 @@ The data-preparation scripts produce `{out_dir}/{dataset}/DRGrading_{size}x{size
 those exact `*_train.h5` / `*_test.h5` paths to the downstream-eval commands.
 
 The frozen 5-seed downstream experiment (protocol, mean±std table, blendA
-provenance, regeneration commands) is in `docs/DOWNSTREAM_RESULTS.md`.
+provenance, regeneration commands) is in `docs/DOWNSTREAM_RESULTS.md`; a
+second-backbone robustness check (resnet50, same protocol) is documented there
+too.
 
 See `AGENTS.md` for a denser command/gotcha reference, and the
 "eval-checkpoint gap" section below before you touch `--do_eval`. A

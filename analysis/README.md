@@ -40,7 +40,7 @@ recall), assemble one h5 where each grade comes from a different generated set:
 ```bash
 python analysis/merge_h5_by_grade.py --sources \
     "0=output/generated_cfg4/generated.h5 1=output/generated_cfg4/generated.h5 \
-     2=output/generated/generated.h5 3=output/generated/generated.h5 \
+     2=output/generated_cs1.5/generated.h5 3=output/generated_cs1.5/generated.h5 \
      4=output/generated_cfg4/generated.h5" \
     --out output/generated_blendA/generated.h5 --cap 1000 --caps_override "4=0"
 ```
