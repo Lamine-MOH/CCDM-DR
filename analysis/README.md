@@ -53,6 +53,19 @@ Legacy h5 files (written before generate_from_ckpt.py stored attrs) print
 `cond_scale=?`; stamp their provenance with `analysis/tag_h5.py --h5 <path>
 --cond_scale <cs> --max_label 4` so blends stay self-describing.
 
+### `seed_report.py` — seed-robust metric aggregation
+
+Groups `*_metrics.json` by protocol and prints **mean ± std** per metric plus
+index-aligned paired deltas (with same-sign counts), so the seed-sensitivity of
+any downstream gain is explicit. Runs are passed as explicit run_names:
+
+```bash
+python analysis/seed_report.py --results_dir ./downstream_results \
+    --group real_only real_only_s111 real_only_s112 real_only_s113 \
+    --group augmented real_plus_synth_blendA_s111 real_plus_synth_blendA_s112 \
+                      real_plus_synth_blendA_s113
+```
+
 ## A1 — `trace_conditioning.py` (teaching-signal tracer)
 
 Splits every `results/sample_{ode,sde}_<step>.png` grid into its 10×10 cells
