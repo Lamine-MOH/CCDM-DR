@@ -49,6 +49,9 @@ python analysis/merge_h5_by_grade.py --sources \
 
 Optional per-grade cap override: `--caps_override "4=500"`. Output uses the same
 `images`(uint8 CHW)/`labels`(float64) schema, ready for `--synthetic_h5`.
+Legacy h5 files (written before generate_from_ckpt.py stored attrs) print
+`cond_scale=?`; stamp their provenance with `analysis/tag_h5.py --h5 <path>
+--cond_scale <cs> --max_label 4` so blends stay self-describing.
 
 ## A1 — `trace_conditioning.py` (teaching-signal tracer)
 
