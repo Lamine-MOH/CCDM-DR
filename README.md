@@ -74,7 +74,8 @@ those exact `*_train.h5` / `*_test.h5` paths to the downstream-eval commands.
 The frozen 5-seed downstream experiment (protocol, mean±std table, blendA
 provenance, regeneration commands) is in `docs/DOWNSTREAM_RESULTS.md`; a
 second-backbone robustness check (resnet50, same protocol) is documented there
-too.
+too. The blendA dataset, its per-grade source h5s, and the inspection montages
+are downloadable from a public Google Drive share (links in the doc).
 
 See `AGENTS.md` for a denser command/gotcha reference, and the
 "eval-checkpoint gap" section below before you touch `--do_eval`. A

@@ -109,6 +109,28 @@ Interpretation:
   a 3rd backbone or a larger test set are the natural follow-ups if
   cross-backbone robustness is claimed.
 
+## Artifacts (public download)
+
+Experiment share (anyone with the link):
+`https://drive.google.com/drive/folders/1bFBIGMzQqDg7yCmamA4dpVXmUqQsbHI4`
+
+| folder | contents | role |
+|---|---|---|
+| `generated_blendA/` | `generated.h5` (116 MB) | the frozen augmentation set (blendA: g0–3 synthetic ×1000, g4 real-only) |
+| `generated_cfg4/` | `generated.h5` + `sample_grade_0..4.png` | blendA source for grades 0/1/4 (cond_scale 4.0) |
+| `generated_cs1.5/` | `generated.h5` + `sample_grade_0..4.png` | blendA source for grades 2/3 (cond_scale 1.5) |
+| `montages_cfg4/` | `all_grades_compare.png`, `real_vs_synthetic_grade_{0..4}.png`, `README_viewing_guide.md` | human-inspection montages (real top / synthetic bottom) |
+
+Fetch the whole share (needs `gdown`):
+
+```bash
+gdown --folder https://drive.google.com/drive/folders/1bFBIGMzQqDg7yCmamA4dpVXmUqQsbHI4
+```
+
+These h5s are convenience copies; the "Regeneration" section below reproduces
+each one from source (model + blend commands), so reviewers can regenerate
+rather than trust the upload.
+
 ## Model & training provenance (`model-100000.pt`)
 
 Source checkpoint: `output/DRGrading_128/setup1_dr/results/model-100000.pt`
