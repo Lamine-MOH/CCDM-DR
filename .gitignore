@@ -36,5 +36,5 @@ env/
 # Jupyter
 .ipynb_checkpoints/
 
-docs/
+docs_private/
 temp/
