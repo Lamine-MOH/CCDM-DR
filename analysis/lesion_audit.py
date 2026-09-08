@@ -26,7 +26,7 @@ Usage:
         --real data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
         --sets output/generated_cfg4/generated.h5 output/generated_cs1.5/generated.h5 \
                output/generated_blendA/generated.h5 \
-        --ckpt downstream_results/real_only_s111_best.pth --backbone densenet121 \
+        --ckpt downstream_results/real_only_s112_best.pth --backbone densenet121 \
         --out_dir output/audit --img_size 128 --batch_size 32
 """
 

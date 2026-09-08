@@ -22,7 +22,7 @@ Output per source (into --out_dir):
 Usage:
     python analysis/filter_synthetic.py \
         --sources output/generated_cfg4/generated.h5 output/generated_cs1.5/generated.h5 \
-        --ckpts densenet121=downstream_results/real_only_s111_best.pth \
+        --ckpts densenet121=downstream_results/real_only_s112_best.pth \
                 resnet50=downstream_results/real_only_r50_s111_best.pth \
         --out_dir output/filtered --img_size 128 --batch_size 32
 
@@ -124,7 +124,7 @@ def main():
     with open(os.path.join(args.out_dir, "filter_pass_rate.csv"), "w") as summary:
         summary.write("scale,grade,produced,passed,dedup_removed,kept,pass_rate\n")
         for src in args.sources:
-            base = os.path.splitext(os.path.basename(src))[0]
+            base = os.path.basename(os.path.dirname(src))
             scale = base if base else src
             images, labels = load_h5(src)
             labels_int = np.round(labels).astype(np.int64)

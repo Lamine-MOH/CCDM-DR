@@ -71,21 +71,30 @@ near-duplicate removal:
 ```bash
 python analysis/filter_synthetic.py \
     --sources output/generated_cfg4/generated.h5 output/generated_cs1.5/generated.h5 \
-    --ckpts densenet121=downstream_results/real_only_s111_best.pth \
+    --ckpts densenet121=downstream_results/real_only_s112_best.pth \
             resnet50=downstream_results/real_only_r50_s111_best.pth \
-    --out_dir output/filtered --img_size 128 --batch_size 32
+    --out_dir output/filtered --dedup_hamming 0
 ```
 
-Writes per source `{base}_filtered.h5` (with `rank`), `{base}_scores.npz`, and
+Output names carry the SOURCE DIRECTORY as the scale tag: `generated_cfg4_filtered.h5`,
+`generated_cs1.5_filtered.h5`, `{scale}_scores.npz`, and `filter_pass_rate.csv`.
+Use any real-only trained checkpoint of each backbone (e.g. densenet121 s112-115).
+
+Writes per source `{scale}_filtered.h5` (with `rank`), `{scale}_scores.npz`, and
 `filter_pass_rate.csv` — the per-grade pass-rate table ("how many synthetics
 survive an ensemble of real-trained graders"). Feed the filtered h5 into
 `merge_h5_by_grade.py` (rank-aware now) to build a filtered blend.
 
-Needs the classifier **scoring mode**:
+Note on `--dedup_hamming` (default 6): the 8x8-block dHash over-collides on
+low-texture classes (healthy/g0 synthetics drop ~84% as "near-duplicates"), so
+use `--dedup_hamming 0` for the primary blend and treat hamming>0 as a
+sensitivity check only.
+
+Needs the classifier **scoring mode** (scores any h5 with a trained checkpoint):
 ```bash
 python downstream_eval/train_dr_classifier.py \
     --score_h5 output/generated_cfg4/generated.h5 \
-    --ckpt downstream_results/real_only_s111_best.pth \
+    --ckpt downstream_results/real_only_s112_best.pth \
     --backbone densenet121 --run_name score_cfg4
 ```
 (no training; writes `{score_h5base}_scores_{run_name}.csv`, plus `_probs_*.npz`
@@ -102,7 +111,7 @@ python analysis/lesion_audit.py \
     --real data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
     --sets output/generated_cfg4/generated.h5 output/generated_cs1.5/generated.h5 \
            output/generated_blendA/generated.h5 \
-    --ckpt downstream_results/real_only_s111_best.pth --backbone densenet121 \
+    --ckpt downstream_results/real_only_s112_best.pth --backbone densenet121 \
     --out_dir output/audit
 ```
 
