@@ -6,10 +6,8 @@ separability flat at 0.17-0.44 across checkpoints, synthetic-only classifier
 QWK ceiling ~0.80 with grade-2 recall 0.20, and/or visually incoherent
 lesions.)
 
-Quick start (see `docs/RETRAIN_GUIDE.md` §5 for thresholds):
-
 ```bash
-bash analysis/run_diagnosis.sh ROOT_PATH DATA_PATH --synth_h5 output/generated/generated.h5
+bash analysis/run_diagnosis.sh ROOT_PATH DATA_PATH --synth_h5 output/generated_cs4/generated.h5
 ```
 
 When the A1 trace stays at chance (conditioning "flows but is weak"), two
@@ -42,9 +40,9 @@ recall), assemble one h5 where each grade comes from a different generated set:
 ```bash
 python analysis/merge_h5_by_grade.py --sources \
     "0=output/generated_cfg4/generated.h5 1=output/generated_cfg4/generated.h5 \
-     2=output/generated_cfg6/generated.h5 3=output/generated_cfg6/generated.h5 \
+     2=output/generated/generated.h5 3=output/generated/generated.h5 \
      4=output/generated_cfg4/generated.h5" \
-    --out output/generated_blend/generated.h5 --cap 1000
+    --out output/generated_blendA/generated.h5 --cap 1000 --caps_override "4=0"
 ```
 
 Optional per-grade cap override: `--caps_override "4=500"`. Output uses the same
@@ -96,3 +94,22 @@ Per grade 0-4: 2×12 montage with real images on top, synthetic on the bottom,
 plus an all-grades combined image and `README_viewing_guide.md` with a
 checklist (are MAs/hemorrhages/exudates present, does severity rise with
 grade, are lesions anatomically plausible, does background look over-smooth?).
+
+## `run_downstream_protocol.sh` — frozen-protocol runner for a 2nd backbone
+
+Re-runs the frozen downstream protocol (real-only + blendA-augmented, seeds
+111-115) for a different classifier backbone as a robustness check — see
+`docs/DOWNSTREAM_RESULTS.md`. Hyperparameters are locked to the frozen ones;
+only `--backbone` and the run-name prefix differ so the original densenet121
+rows are never overwritten or mixed:
+
+```bash
+bash analysis/run_downstream_protocol.sh resnet50 r50 \
+    data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
+    data/DRGrading/Aptos/DRGrading_128x128_test.h5
+```
+
+Runs sequentially (real then augmented per seed); each run is ~20-40 min GPU.
+Writes `{OUT_DIR}/real_only_r50_s{111..115}_metrics.json` and
+`real_plus_synth_blendA_r50_s{111..115}_metrics.json`, then prints the
+`seed_report.py` command to aggregate them.
