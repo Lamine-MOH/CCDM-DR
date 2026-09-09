@@ -90,6 +90,7 @@ def content_stats(img):
 def cam_trueclass(model, loader, device):
     """Mean true-class Grad-CAM over the retina mask per image (order-matched)."""
     import torch
+    import torch.nn as nn
     import torch.nn.functional as F
 
     acts, grads = {}, {}
@@ -100,13 +101,16 @@ def cam_trueclass(model, loader, device):
     def hook_bwd(m, _gin, gout):
         grads[m] = gout[0]
 
+    # Hook the LAST conv inside 'features': hooking the whole features module
+    # clashes with DenseNet's trailing F.relu(inplace=True) (a view is modified
+    # inside a custom backward). The last conv's output is only consumed by a
+    # non-inplace BatchNorm, so it is safe and is the standard Grad-CAM site.
     target = None
-    for name, mod in model.named_modules():
-        if name == "features":
+    for name, mod in model.features.named_modules():
+        if isinstance(mod, nn.Conv2d):
             target = mod
-            break
     if target is None:
-        raise ValueError("no 'features' module for Grad-CAM (CNN backbones only)")
+        raise ValueError("no Conv2d under 'features' for Grad-CAM (CNN backbones only)")
 
     fwd_h = target.register_forward_hook(hook_fwd)
     bwd_h = target.register_full_backward_hook(hook_bwd)
