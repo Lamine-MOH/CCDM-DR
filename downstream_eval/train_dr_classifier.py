@@ -195,6 +195,10 @@ def main():
     p.add_argument("--ckpt", type=str, default=None, help="path to {run}_best.pth state_dict for --score_h5")
     p.add_argument("--score_save_probs", action="store_true",
                    help="with --score_h5, also dump per-image class probabilities to .npz")
+    p.add_argument("--save_test_preds", type=str, default=None,
+                   help="after training, re-evaluate the best model on the test split and dump "
+                        "preds/labels/probs to this .npz (for external-domain re-scoring, e.g. "
+                        "Messidor-2's 0-3 scale)")
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -290,6 +294,13 @@ def main():
             best_qwk = metrics["qwk"]
             best_metrics = metrics
             torch.save(model.state_dict(), os.path.join(args.out_dir, f"{args.run_name}_best.pth"))
+
+    if args.save_test_preds is not None:
+        state = torch.load(os.path.join(args.out_dir, f"{args.run_name}_best.pth"), map_location=device)
+        model.load_state_dict(state)
+        ev = evaluate(model, test_loader, device, return_probs=True)
+        np.savez(args.save_test_preds, preds=ev["preds"], labels=ev["labels"], probs=ev["probs"])
+        print(f"\nSaved best-model test predictions -> {args.save_test_preds}")
 
     out_path = os.path.join(args.out_dir, f"{args.run_name}_metrics.json")
     with open(out_path, "w") as f:
