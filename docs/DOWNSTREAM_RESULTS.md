@@ -182,12 +182,29 @@ Messidor-2 ships with native 0–4 labels, so no grade-merge re-scoring was need
   robustly improves the target-domain model on the largest available external
   vote of confidence.
 
-### C9. DINOv2 backbone — in progress
+### C9. DINOv2 backbone — gate failed at 128×128 (resolution-limited)
 
-First gate run failed (`vit_base_patch14_dinov2` expects 518 input; the pipeline
-feeds 128). Fixed by `_resize_vit_pos_embed()` in `train_dr_classifier.py`
-(pos-embed interpolated 37²→9², CLS kept). 3-seed gate vs the frozen densenet
-running; promote to 5 seeds only if it beats the headline.
+Initial run hit a timm quirk (`vit_base_patch14_dinov2` defaults to 518 input
+while the pipeline feeds 128) — fixed by `_resize_vit_pos_embed()` in
+`train_dr_classifier.py` (pos-embed interpolated 37²→9², patch_embed
+re-targeted, CLS kept; applied whenever img_size differs). The 3-seed gate then
+ran on the frozen protocol. Same-seed comparison (111–113):
+
+| backbone arm | acc | macro-F1 | QWK |
+|---|---|---|---|
+| densenet real_only | 0.8312 | 0.6904 | 0.9080 |
+| densenet +blendA | **0.8415** | **0.7095** | **0.9193** |
+| DINOv2 real_only | 0.6053 ± 0.081 | 0.3657 ± 0.112 | 0.6619 ± 0.019 |
+| DINOv2 +blendA | 0.6430 ± 0.017 | 0.4191 ± 0.017 | 0.6795 ± 0.015 |
+
+**Verdict: DINOv2 is ~0.20 acc / ~0.24 QWK below densenet on every arm; not
+adopted.** At 128 the model has only 81 tokens (9×9 grid vs native 37×37), its
+real-only baseline is unstable (acc std 0.08, mF1 std 0.11), and its augment
+delta holds only on QWK (+3/−0) and g4 recall (+0.254, +3/−0). This reproduces
+the pre-committed caution in `docs_private/LITERATURE_REVIEW.md` §1.3 that the
+128 layout likely cannot reproduce the published protocol numbers. densenet121 +
+blendA remains the headline; a higher-resolution DINOv2 re-test is parked (the
+256×256 generator/data path exists — see DR256 config).
 
 ## Artifacts (public download)
 
