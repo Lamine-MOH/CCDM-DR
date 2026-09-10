@@ -156,7 +156,7 @@ def _resize_vit_pos_embed(model, img_size):
     patch_embed.grid_size = (grid_new, grid_new)
 
 
-def build_model(backbone, num_classes=5, pretrained=True, img_size=None):
+def build_model(backbone, num_classes=5, pretrained=True, img_size=128):
     if backbone in ("resnet50", "resnet101"):
         if backbone == "resnet50":
             m = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2 if pretrained else None)
