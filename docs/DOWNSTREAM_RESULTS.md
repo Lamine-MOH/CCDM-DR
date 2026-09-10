@@ -109,6 +109,86 @@ Interpretation:
   a 3rd backbone or a larger test set are the natural follow-ups if
   cross-backbone robustness is claimed.
 
+## Batch A — supplemental results (2026-09-08)
+
+Supplementary evidence collected **after** the frozen result above; the headline
+densenet121 + blendA table is unchanged. Batch A = no generator retrain.
+
+### A1. Semantic filtering of the synthetic pool — negative result (control)
+
+Hypothesis from ECC_DM (MICCAI 2025): an ensemble of real-trained classifiers
+should retain only "good" synthetic samples, improving the augmented set.
+Per-grade pass rates (dedup off, max-likelihood ensemble of densenet121 +
+resnet50): cfg4 957/645/207/3/527, cs1.5 763/690/541/80/490. Two matched 2223-image
+blends were validated on the frozen 5-seed protocol.
+
+| arm | acc | macro-F1 | QWK |
+|---|---|---|---|
+| real_only (frozen) | 0.8295 | 0.6916 | 0.9063 |
+| blendA 1000/grade (frozen) | **0.8426** | **0.7129** | **0.9204** |
+| random control (2223, matched counts) | 0.8350 | 0.7049 | 0.9111 |
+| filtered (2223) | 0.8284 | 0.7018 | 0.9082 |
+
+**Interpretation:** filtering does not beat random selection at matched quantity
+(filtered ≈ real_only; random > filtered on all three headline metrics). The
+gain of blendA comes from **volume + diversity**, not label purity. filtering is
+dropped from the method narrative and reported as a negative control. (Per-grade:
+filtered g3 +0.106 but on only 80 samples; not claimable.)
+
+### A2. Quantitative lesion audit
+
+`analysis/lesion_audit.py`: high-frequency ratio, edge energy, local noise, color
+stats, and true-class Grad-CAM (mean lesion-attribution over the retina) for real
+vs cfg4 / cs1.5 / blendA / filtered, per grade.
+
+- **High-frequency "airbrushed" proxy:** real 0.074–0.115 vs synthetic
+  0.080–0.135 — synthetics are *not* smoother than real; this common criticism
+  is not confirmed by the metric.
+- **Redness** follows the real gentle rise into g1/g2; g3/g4 softer.
+- **Grad-CAM** decreases with severity in both real (0.00148→0.00051) and
+  synthetic (cfg4 0.00145→0.00080), but synthetic amplitude is flatter/lower.
+  The filtered blend's g2/g3 are the weakest-CAM samples — i.e. the filter
+  kept the outliers, not the healthy-core samples.
+- Caveat: CAM is a classifier-attribution proxy, not a lesion segmentor.
+- Figures `realism_by_grade.png`, `lesion_presence_by_grade.png` staged; upload
+  to the public share is pending (note: filtered and randmatch blend h5s
+  `output/generated_blendA_filt/`, `output/generated_blendA_randmatch/` are on
+  TM and can be shared for regeneration).
+
+### E16. External-domain generalization (Messidor-2, IDRiD, DDR)
+
+Train on APTOS (real-only vs +blendA 1000/grade), test on each external set's
+test split, densenet121, 3 seeds. Pre-built 128 h5s via `download_h5.py`;
+Messidor-2 ships with native 0–4 labels, so no grade-merge re-scoring was needed.
+
+| set (test n) | arm | acc | macro-F1 | QWK | seed agreement (acc/mF1/QWK) |
+|---|---|---|---|---|---|
+| IDRiD (77) | real_only | 0.3723 ± 0.027 | 0.3457 ± 0.027 | 0.6823 ± 0.036 | — |
+| IDRiD (77) | +blendA | 0.3983 ± 0.064 | 0.2974 ± 0.079 | 0.6915 ± 0.002 | +2/−1 / +1/−2 / +2/−1 |
+| Messidor-2 (261) | real_only | 0.6296 ± 0.012 | 0.3706 ± 0.007 | 0.5083 ± 0.002 | — |
+| Messidor-2 (261) | +blendA | 0.6054 ± 0.008 | 0.3537 ± 0.029 | 0.5145 ± 0.040 | 0/−3 / +2/−1 / +2/−1 |
+| DDR (1878) | real_only | 0.5619 ± 0.026 | 0.3147 ± 0.007 | 0.5518 ± 0.013 | — |
+| DDR (1878) | +blendA | 0.6022 ± 0.010 | 0.3682 ± 0.017 | 0.5993 ± 0.005 | +3/−0 / +3/−0 / +3/−0 |
+
+**Interpretation:**
+- On the **largest external set (DDR)** the augmentation benefit transfers
+  robustly (+3/−0 on accuracy, macro-F1, QWK; +0.040/+0.054/+0.048) — the
+  headline effect is a generalization, not APTOS-overfit.
+- On the small sets the signal is noise-dominated: Messidor-2 accuracy dips on
+  all 3 seeds (QWK still rises); IDRiD's 77-image test flips sign per metric.
+- Absolute transfer is low everywhere (acc 0.37–0.63) — the expected
+  cross-domain drop. Synthetic augmentation does **not** fix domain shift
+  (consistent with the Commun Med 2025 external-non-transfer caveat), but it
+  robustly improves the target-domain model on the largest available external
+  vote of confidence.
+
+### C9. DINOv2 backbone — in progress
+
+First gate run failed (`vit_base_patch14_dinov2` expects 518 input; the pipeline
+feeds 128). Fixed by `_resize_vit_pos_embed()` in `train_dr_classifier.py`
+(pos-embed interpolated 37²→9², CLS kept). 3-seed gate vs the frozen densenet
+running; promote to 5 seeds only if it beats the headline.
+
 ## Artifacts (public download)
 
 Experiment share (anyone with the link):

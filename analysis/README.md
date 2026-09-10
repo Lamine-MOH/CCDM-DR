@@ -85,6 +85,12 @@ Writes per source `{scale}_filtered.h5` (with `rank`), `{scale}_scores.npz`, and
 survive an ensemble of real-trained graders"). Feed the filtered h5 into
 `merge_h5_by_grade.py` (rank-aware now) to build a filtered blend.
 
+**Result (A1, negative):** at matched quantity a filtered blend did NOT beat a
+random draw from the unfiltered pools on the 5-seed densenet protocol (filtered
+≈ real_only; random > filtered on acc/macro-F1/QWK) — the blendA gain is
+volume+diversity, not label purity. Full table + interpretation in
+`docs/DOWNSTREAM_RESULTS.md` §Batch A.
+
 Note on `--dedup_hamming` (default 6): the 8x8-block dHash over-collides on
 low-texture classes (healthy/g0 synthetics drop ~84% as "near-duplicates"), so
 use `--dedup_hamming 0` for the primary blend and treat hamming>0 as a
