@@ -111,7 +111,52 @@ def cap_per_class(images, labels, cap):
     return images[keep_idx], labels[keep_idx]
 
 
-def build_model(backbone, num_classes=5, pretrained=True):
+def _resize_vit_pos_embed(model, img_size):
+    """Re-target a timm ViT with a learned positional embedding to a different
+    input resolution than its pretrained default (e.g. DINOv2's 518 -> 128).
+
+    The patch embed is just a stride-(patch_size) conv, so the model works at
+    any resolution on its own; only the learned pos-embed needs to be
+    re-interpolated to match the new token grid. Class/distillation prefix
+    tokens are kept unchanged. No-op for any other model family.
+    """
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    pe = getattr(model, "pos_embed", None)
+    patch_embed = getattr(model, "patch_embed", None)
+    if pe is None or patch_embed is None or not hasattr(patch_embed, "patch_size"):
+        return
+
+    ps = patch_embed.patch_size
+    ps = ps[0] if isinstance(ps, (tuple, list)) else ps
+    grid_new = (img_size - ps) // ps + 1  # conv output for non-divisible inputs
+    n_tok_new = grid_new * grid_new
+
+    prefix = getattr(model, "num_prefix_tokens", 1)
+    n_tok_old = pe.shape[1] - prefix
+    grid_old = int(round(n_tok_old**0.5))
+    if grid_old * grid_old != n_tok_old:
+        raise ValueError(f"non-square pos-embed grid with {n_tok_old} spatial tokens")
+
+    cls_tokens = pe[:, :prefix]
+    spatial = pe[:, prefix:].reshape(1, grid_old, grid_old, -1).permute(0, 3, 1, 2)
+    spatial = F.interpolate(spatial, size=(grid_new, grid_new), mode="bicubic", align_corners=False)
+    spatial = spatial.permute(0, 2, 3, 1).reshape(1, n_tok_new, -1)
+    new_pe = torch.cat([cls_tokens, spatial], dim=1)
+
+    with torch.no_grad():
+        if new_pe.shape == pe.shape:
+            pe.copy_(new_pe)
+        else:
+            model.pos_embed = nn.Parameter(new_pe)
+    patch_embed.img_size = (img_size, img_size)
+    patch_embed.num_patches = n_tok_new
+    patch_embed.grid_size = (grid_new, grid_new)
+
+
+def build_model(backbone, num_classes=5, pretrained=True, img_size=None):
     if backbone in ("resnet50", "resnet101"):
         if backbone == "resnet50":
             m = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2 if pretrained else None)
@@ -135,6 +180,8 @@ def build_model(backbone, num_classes=5, pretrained=True):
     elif backbone == "vit_base_patch14_dinov2":
         m = timm.create_model("vit_base_patch14_dinov2", pretrained=pretrained, num_classes=0)
         m.head = nn.Linear(m.embed_dim, num_classes)
+        if img_size is not None:
+            _resize_vit_pos_embed(m, img_size)
     elif backbone == "swin_large":
         m = timm.create_model("swin_large_patch4_window7_224", pretrained=pretrained, num_classes=num_classes)
     else:
@@ -209,7 +256,7 @@ def main():
         images, labels = load_h5(args.score_h5)
         ds = DRDataset(images, labels, train=False, img_size=args.img_size)
         loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-        model = build_model(args.backbone, pretrained=False).to(device)
+        model = build_model(args.backbone, pretrained=False, img_size=args.img_size).to(device)
         state = torch.load(args.ckpt, map_location=device)
         missing, unexpected = model.load_state_dict(state, strict=True)
         print(f"[score] loaded {args.ckpt}: missing={missing}, unexpected={unexpected}")
@@ -257,7 +304,7 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, drop_last=True)
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    model = build_model(args.backbone, pretrained=args.pretrained).to(device)
+    model = build_model(args.backbone, pretrained=args.pretrained, img_size=args.img_size).to(device)
 
     # Class-balanced loss: even with synthetic augmentation the real
     # distribution is still skewed, so keep inverse-frequency weighting on
