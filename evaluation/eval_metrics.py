@@ -108,35 +108,33 @@ def cal_FID(PreNetFID, IMGSr, IMGSg, batch_size = 500, resize = None, norm_img =
     with torch.no_grad():
         tmp = 0
         pb1 = SimpleProgressBar()
-        for i in range(nr//batch_size):
-            imgr_tensor = torch.from_numpy(IMGSr[tmp:(tmp+batch_size)]).type(torch.float).to(device)
+        for i in range(0, nr, batch_size):
+            end = min(i + batch_size, nr)
+            imgr_tensor = torch.from_numpy(IMGSr[i:end]).type(torch.float).to(device)
             if resize is not None:
-                imgr_tensor = nn.functional.interpolate(imgr_tensor, size = resize, scale_factor=None, mode='bilinear', align_corners=False)
+                imgr_tensor = nn.functional.interpolate(imgr_tensor, size=resize, scale_factor=None, mode='bilinear', align_corners=False)
             if norm_img:
                 imgr_tensor = normalize_images(imgr_tensor)
-            # _, Xr_tmp = PreNetFID(imgr_tensor)
             Xr_tmp = PreNetFID(imgr_tensor)
-            Xr[tmp:(tmp+batch_size)] = Xr_tmp.detach().cpu().numpy()
-            tmp+=batch_size
-            # pb1.update(min(float(i)*100/(nr//batch_size), 100))
-            pb1.update(min(max(tmp/nr*100,100), 100))
+            Xr[i:end] = Xr_tmp.detach().cpu().numpy()
+            tmp = end
+            pb1.update(min(tmp / nr * 100, 100))
         del Xr_tmp,imgr_tensor; gc.collect()
         torch.cuda.empty_cache()
 
         tmp = 0
         pb2 = SimpleProgressBar()
-        for j in range(ng//batch_size):
-            imgg_tensor = torch.from_numpy(IMGSg[tmp:(tmp+batch_size)]).type(torch.float).to(device)
+        for j in range(0, ng, batch_size):
+            end = min(j + batch_size, ng)
+            imgg_tensor = torch.from_numpy(IMGSg[j:end]).type(torch.float).to(device)
             if resize is not None:
-                imgg_tensor = nn.functional.interpolate(imgg_tensor, size = resize, scale_factor=None, mode='bilinear', align_corners=False)
+                imgg_tensor = nn.functional.interpolate(imgg_tensor, size=resize, scale_factor=None, mode='bilinear', align_corners=False)
             if norm_img:
                 imgg_tensor = normalize_images(imgg_tensor)
-            # _, Xg_tmp = PreNetFID(imgg_tensor)
             Xg_tmp = PreNetFID(imgg_tensor)
-            Xg[tmp:(tmp+batch_size)] = Xg_tmp.detach().cpu().numpy()
-            tmp+=batch_size
-            # pb2.update(min(float(j)*100/(ng//batch_size), 100))
-            pb2.update(min(max(tmp/ng*100, 100), 100))
+            Xg[j:end] = Xg_tmp.detach().cpu().numpy()
+            tmp = end
+            pb2.update(min(tmp / ng * 100, 100))
         del Xg_tmp,imgg_tensor; gc.collect()
         torch.cuda.empty_cache()
 
@@ -246,11 +244,11 @@ def inception_score(imgs, num_classes, net, batch_size=32, splits=1, normalize_i
 
         preds[i*batch_size:i*batch_size + batch_size_i] = get_pred(batchv)
 
-    # Now compute the mean kl-div
+    # Now compute the mean kl-div. Use array_split so the N % splits remainder
+    # is folded into an over-sized first split instead of being silently dropped.
     split_scores = []
 
-    for k in range(splits):
-        part = preds[k * (N // splits): (k+1) * (N // splits), :]
+    for part in np.array_split(preds, splits):
         py = np.mean(part, axis=0)
         scores = []
         for i in range(part.shape[0]):

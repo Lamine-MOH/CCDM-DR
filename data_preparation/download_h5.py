@@ -37,6 +37,11 @@ import h5py
 DATASETS = ["Aptos", "IDRiD", "DDR", "Messidor2"]
 RESOLUTIONS = [64, 128, 256]
 
+# Output subdirectory name for each dataset. Messidor-2 uses a hyphen
+# (matching get_dataset.py / build_dr_h5.py output paths), while the CLI/env
+# keys above use the underscore-free "Messidor2".
+DATASET_DIR = {"Messidor2": "Messidor-2"}
+
 # Mapping from (dataset, split, resolution) to env file key
 # e.g. APTOS_128_TRAIN, IDRiD_64_TEST, etc.
 KEY_MAP = {
@@ -174,7 +179,7 @@ def main():
         print(f"Dataset: {dataset} | Resolution: {res}x{res}")
         print(f"{'='*60}")
 
-        ds_dir = os.path.join(args.out_dir, dataset)
+        ds_dir = os.path.join(args.out_dir, DATASET_DIR.get(dataset, dataset))
         os.makedirs(ds_dir, exist_ok=True)
 
         for split in ["train", "test"]:

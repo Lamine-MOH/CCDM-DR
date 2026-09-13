@@ -33,6 +33,7 @@ Example:
 
 import argparse
 import os
+import json
 
 import numpy as np
 import torch
@@ -79,6 +80,11 @@ def parse_args():
                    help="max raw label; labels are normalized to grade/max_label")
 
     # EDM hyperparameters (must match training; DR128 uses these defaults)
+    p.add_argument("--edm_sigma_data_type", type=str, default="default",
+                   choices=["default", "global", "local"],
+                   help="sigma_data scheme; authoritative value is read from "
+                        "edm_sigma_data.json next to the checkpoint. This flag is "
+                        "the fallback only when that file is missing.")
     p.add_argument("--edm_sigma_data_default", type=float, default=0.5)
     p.add_argument("--edm_sigma_min", type=float, default=0.002)
     p.add_argument("--edm_sigma_max", type=float, default=80)
@@ -117,23 +123,90 @@ def parse_args():
     return args
 
 
-def build_sigma_data_fn(default_val):
-    """Replicates main.py's `edm_sigma_data_type == "default"` branch."""
-    def _check_label_type(y):
-        if isinstance(y, torch.Tensor):
-            return "tensor"
-        elif isinstance(y, (int, float)):
-            return "scalar"
-        raise TypeError("labels `y` must be a scalar or a torch.Tensor.")
+def load_sigma_data(args):
+    """Reconcile the persisted edm_sigma_data.json with CLI fallbacks.
 
-    def fn_y2sigma_data(y):
-        kind = _check_label_type(y)
-        val = float(default_val)
-        if kind == "scalar":
-            return val
-        return torch.full_like(y, fill_value=val)
+    Returns (sigma_type, default_val, y_unique, sigma_unique). The metadata JSON
+    lives next to the checkpoint (results/edm_sigma_data.json, written by main.py).
+    - metadata present -> authoritative (reconstructs global/local exactly).
+    - metadata missing + non-default request -> hard error (no silent 0.5 fallback).
+    - metadata missing + 'default' -> legacy CLI fallback with a warning.
+    """
+    meta_path = os.path.join(os.path.dirname(os.path.abspath(args.model_ckpt)), "edm_sigma_data.json")
+    if os.path.isfile(meta_path):
+        with open(meta_path) as f:
+            meta = json.load(f)
+        print(" Loaded sigma_data metadata from {}".format(meta_path))
+        return (meta.get("type", args.edm_sigma_data_type),
+                meta.get("default_val", args.edm_sigma_data_default),
+                meta.get("y_unique"), meta.get("sigma_unique"))
+    if args.edm_sigma_data_type != "default":
+        raise RuntimeError(
+            "{} not found and --edm_sigma_data_type is '{}' (non-default). "
+            "No silent 0.5 fallback -- copy the metadata from the training machine "
+            "or reprocess with edm_sigma_data_type=default.".format(meta_path, args.edm_sigma_data_type))
+    print(" WARNING: {} not found; falling back to CLI --edm_sigma_data_default {} "
+          "(legacy, verify it matches training).".format(meta_path, args.edm_sigma_data_default))
+    return ("default", float(args.edm_sigma_data_default), None, None)
 
-    return fn_y2sigma_data
+
+def _check_label_type(y):
+    if isinstance(y, torch.Tensor):
+        return "tensor"
+    elif isinstance(y, (int, float)):
+        return "scalar"
+    raise TypeError("labels `y` must be a scalar or a torch.Tensor.")
+
+
+def build_sigma_data_fn(sigma_type, default_val, y_unique=None, sigma_unique=None):
+    """Replicates main.py's fn_y2sigma_data for all three edm_sigma_data_type
+    branches, so generation uses the exact sigma_data scheme training used."""
+
+    if sigma_type in ("default", "global"):
+        const = float(default_val)
+
+        def fn_y2sigma_data(y):
+            kind = _check_label_type(y)
+            if kind == "scalar":
+                return const
+            return torch.full_like(y, fill_value=const)
+
+        return fn_y2sigma_data
+
+    if sigma_type == "local":
+        y_unique = np.asarray(y_unique, dtype=float)
+        sigma_unique = np.asarray(sigma_unique, dtype=float)
+
+        def fn_y2sigma_data(y, y_unique=y_unique, sigma_unique=sigma_unique):
+            kind = _check_label_type(y)
+            if kind == "scalar":
+                y_np = np.array([float(y)], dtype=float)
+                orig_shape = y_np.shape
+            else:
+                y_np = y.detach().cpu().numpy().astype(float)
+                orig_shape = y_np.shape
+            y_flat = y_np.ravel()
+            idx = np.searchsorted(y_unique, y_flat, side="left")
+            idx_clipped = np.minimum(idx, len(y_unique) - 1)
+            res = np.empty_like(y_flat, dtype=float)
+            mask_equal = (idx < len(y_unique)) & (y_flat == y_unique[idx_clipped])
+            res[mask_equal] = sigma_unique[idx_clipped[mask_equal]]
+            mask_not_equal = ~mask_equal
+            mask_left = mask_not_equal & (idx == 0)
+            res[mask_left] = sigma_unique[0]
+            mask_right = mask_not_equal & (idx == len(y_unique))
+            res[mask_right] = sigma_unique[-1]
+            mask_between = mask_not_equal & (idx > 0) & (idx < len(y_unique))
+            idx_between = idx[mask_between]
+            res[mask_between] = 0.5 * (sigma_unique[idx_between - 1] + sigma_unique[idx_between])
+            res = res.reshape(orig_shape)
+            if kind == "scalar":
+                return float(res.reshape(-1)[0])
+            return torch.from_numpy(res).to(device=y.device, dtype=y.dtype)
+
+        return fn_y2sigma_data
+
+    raise ValueError("Invalid sigma_data type: {}".format(sigma_type))
 
 
 def strip_module_prefix(sd):
@@ -317,7 +390,8 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     fn_y2h, fn_y2cov = make_embed_fns(args, args.device)
-    fn_y2sigma_data = build_sigma_data_fn(args.edm_sigma_data_default)
+    sigma_type, sigma_default_val, y_unique, sigma_unique = load_sigma_data(args)
+    fn_y2sigma_data = build_sigma_data_fn(sigma_type, sigma_default_val, y_unique, sigma_unique)
     diffusion = build_diffusion(args, fn_y2sigma_data, fn_y2cov if args.use_y2cov else None)
     total_params = sum(p.numel() for p in diffusion.parameters())
     print(" Reconstructed {} ({} params).".format(type(diffusion.net).__name__, total_params))
@@ -347,6 +421,7 @@ def main():
         f.attrs["max_label"] = args.max_label
         f.attrs["sampler"] = args.sampler
         f.attrs["num_sample_steps"] = args.num_sample_steps
+        f.attrs["edm_sigma_data_type"] = sigma_type
         f.create_dataset("images", data=images, dtype="uint8", compression="gzip", compression_opts=6)
         f.create_dataset("labels", data=labels, dtype="float64")
     print(" Saved {}\n".format(out_h5))

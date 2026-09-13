@@ -171,7 +171,13 @@ class Trainer:
 
         if exists(self.accelerator.scaler) and exists(data['scaler']):
             self.accelerator.scaler.load_state_dict(data['scaler'])
-        
+
+        # Multi-GPU (DDP) resume: re-prepare the model and optimizer so the
+        # optimizer's param groups are re-linked to the freshly-wrapped model.
+        # Single-GPU leave unchanged (accelerator.prepare is a no-op).
+        if getattr(self.accelerator, "num_processes", 1) > 1:
+            self.model, self.opt = self.accelerator.prepare(self.model, self.opt)
+
         if return_unet:
             return self.model.net #take unet
 
@@ -511,7 +517,9 @@ class Trainer:
                         batch_target_labels = batch_target_labels.bfloat16()
                     
                     with self.accelerator.autocast():
-                        denoise_loss, aux_reg_loss, aux_reg_weight = self.model(images=batch_images, labels=batch_target_labels, labels_emb=self.fn_y2h(batch_target_labels), vicinal_weights = real_weights, max_kappa = max_kappa)
+                        with torch.no_grad():
+                            labels_emb = self.fn_y2h(batch_target_labels)
+                        denoise_loss, aux_reg_loss, aux_reg_weight = self.model(images=batch_images, labels=batch_target_labels, labels_emb=labels_emb, vicinal_weights = real_weights, max_kappa = max_kappa)
                         loss = denoise_loss + aux_reg_loss * aux_reg_weight #denoising loss with auxiliary regression penalty (with weight)
                         loss = loss / float(self.gradient_accumulate_every)
                         total_loss += loss.item()  

@@ -33,10 +33,21 @@ def main():
             "macro_f1": m["macro_f1"],
             "qwk": m["qwk"],
         }
+        if "backbone" in m:
+            row["backbone"] = m["backbone"]
+        if "seed" in m:
+            row["seed"] = m["seed"]
+        if "best_epoch" in m:
+            row["best_epoch"] = m["best_epoch"]
+        if "selection_on" in m:
+            row["selection_on"] = m["selection_on"]
+        if "val_qwk" in m:
+            row["val_qwk"] = m["val_qwk"]
         for g in range(5):
             key = f"grade_{g}"
             if key in m["per_class_report"]:
                 row[f"recall_{key}"] = m["per_class_report"][key]["recall"]
+                row[f"support_{key}"] = m["per_class_report"][key]["support"]
         rows.append(row)
 
     if not rows:
@@ -44,7 +55,27 @@ def main():
         return
 
     df = pd.DataFrame(rows).set_index("run")
-    pd.set_option("display.width", 120)
+
+    # sanity warnings: mixing selection protocols / backbones / seed protocols
+    if "selection_on" in df.columns:
+        sel = df["selection_on"].dropna().unique()
+        if len(sel) > 1 and "test" in sel:
+            print(f"WARNING: runs mix selection protocols ({sorted(sel)}); "
+                  f"'test'-selected rows are deprecated and not comparable.")
+    if "backbone" in df.columns:
+        bb = df["backbone"].dropna().unique()
+        if len(bb) > 1:
+            print(f"WARNING: table mixes backbones {list(dict.fromkeys(bb))}; "
+                  "cross-backbone deltas are not apples-to-apples.")
+    if "seed" in df.columns:
+        seeds = df["seed"].dropna().unique()
+        missing = df["seed"].isna().sum()
+        if missing:
+            print(f"WARNING: {missing} run(s) carry no 'seed' field (older JSON); seed-aware averaging excludes them.")
+        if len(seeds) > 1 and len(seeds) < 5:
+            print(f"WARNING: seed set {sorted(seeds)} has <5 seeds; Mean±std over these is underpowered.")
+
+    pd.set_option("display.width", 160)
     pd.set_option("display.float_format", lambda x: f"{x:.4f}")
     print(df)
 

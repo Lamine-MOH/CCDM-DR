@@ -180,8 +180,6 @@ class model_mlp_y2cov(nn.Module):
 class model_cnn_y2cov(nn.Module):
     def __init__(self, img_size, nc, base_channels=512, num_groups=8):
         super(model_cnn_y2cov, self).__init__()
-
-        super().__init__()
         assert img_size in (64, 128, 192, 256)
 
         layers = []

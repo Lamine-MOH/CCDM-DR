@@ -198,14 +198,6 @@ def random_hflip_tensor(batch_images):
     return batch_images
 
 
-## normalize images
-def normalize_images(batch_images, to_neg_one_to_one=False):
-    batch_images = batch_images/255.0 #to [0,1]
-    if to_neg_one_to_one:
-        batch_images = (batch_images - 0.5)/0.5 
-    return batch_images
-
-
 ## vertical flip images
 def random_vflip(images, p=0.5):
     flip_mask = np.random.rand(images.shape[0]) < p
@@ -226,8 +218,7 @@ def random_rotate_90_degrees(image):
         return np.rot90(image, k=3, axes=(1, 2))
  
 def random_rotate(images):
-    images = np.concatenate([random_rotate_90_degrees(image) for image in images], axis=0)
-    return images[:,np.newaxis,:,:]
+    return np.concatenate([random_rotate_90_degrees(image) for image in images], axis=0)
 
 
 ## compute variance for large scale array

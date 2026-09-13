@@ -2,6 +2,7 @@ print("\n=======================================================================
 
 import os
 import math
+import json
 from abc import abstractmethod
 import random
 import sys
@@ -55,6 +56,10 @@ with open(args.model_config) as f:
 
 assert model_config["data"]["image_size"] == args.image_size
 assert model_config["data"]["num_channels"] == args.num_channels
+if "label_dim" in model_config.get("model", {}):
+    assert model_config["model"]["label_dim"] == args.dim_embed, \
+        "model_config['model']['label_dim'] {} != --dim_embed {}".format(
+            model_config["model"]["label_dim"], args.dim_embed)
 
 #######################################################################################
 '''                                Output folders                                  '''
@@ -249,6 +254,22 @@ elif args.edm_sigma_data_type == "local":  # y-dependent data standard deviation
 
 else:
     raise ValueError("Invalid data variance type!")
+
+# Persist the sigma_data configuration so generate_from_ckpt.py can reconstruct
+# the exact fn_y2sigma_data used for training (no silent default fallback).
+sigma_meta = {"type": args.edm_sigma_data_type}
+if args.edm_sigma_data_type == "default":
+    sigma_meta["default_val"] = float(args.edm_sigma_data_default)
+elif args.edm_sigma_data_type == "global":
+    sigma_meta["default_val"] = float(sigma_data)
+elif args.edm_sigma_data_type == "local":
+    sigma_meta["default_val"] = None
+    sigma_meta["y_unique"] = y_unique_np.tolist()
+    sigma_meta["sigma_unique"] = sigma_unique.tolist()
+sigma_meta_path = os.path.join(save_results_folder, "edm_sigma_data.json")
+with open(sigma_meta_path, "w") as f:
+    json.dump(sigma_meta, f, indent=2)
+print("\n Saved sigma_data metadata to {}".format(sigma_meta_path))
 
 
 
