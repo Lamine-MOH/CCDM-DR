@@ -43,6 +43,19 @@ A held-out test split is written to a *second* h5 file
 so the diffusion model only ever trains on the train split, and the same
 test split can be reused later for downstream classifier evaluation
 (see downstream_eval/train_dr_classifier.py).
+
+The train/test split is STRATIFIED BY GRADE (per-grade proportional, so every
+grade appears in both splits) and uses a --test_frac held-out fraction
+(default 0.20, i.e. 80/20). If any grade ends up with fewer than
+--min_test_per_grade test samples the script errors and tells you to raise
+--test_frac.
+
+Note (APTOS / DRGrading policy): the source pool itself is the merge of the
+original dataset's train+test+val splits (per get_dataset.py), so the
+"test.h5" here is a within-pool random holdout, NOT the original
+competition's held-out split. It is intentionally the same split the
+downstream classifier later trains/evaluates on, for a consistent
+in-project protocol.
 """
 
 import argparse
@@ -121,6 +134,47 @@ def process_image(path, img_size, use_clahe):
     return img_rgb.transpose(2, 0, 1)  # HWC -> CHW
 
 
+def stratified_split(labels, test_frac, seed, min_test_per_grade):
+    """Per-grade stratified train/test split.
+
+    For each grade, exactly round(n_g * test_frac) (clamped to [1, n_g])
+    samples go to the test split; the rest stay in train. Guarantees every
+    grade present in the input is present in BOTH splits (provided each grade
+    has at least 2 samples).
+
+    Raises ValueError if any grade ends up with fewer than
+    min_test_per_grade test samples — the user should raise --test_frac.
+
+    Returns (train_idx, test_idx, counts) where counts maps int grade ->
+    (n_train, n_test).
+    """
+    rng = np.random.default_rng(seed)
+    train_idx, test_idx, counts = [], [], {}
+    for g in sorted(np.unique(labels)):
+        idx_g = np.where(labels == g)[0]
+        n_test_g = int(round(len(idx_g) * test_frac))
+        n_test_g = max(1, min(n_test_g, len(idx_g)))
+        sel = rng.choice(idx_g, size=n_test_g, replace=False)
+        test_idx.append(sel)
+        train_idx.append(np.setdiff1d(idx_g, sel))
+        counts[int(g)] = (int(len(idx_g) - n_test_g), int(n_test_g))
+
+    train_idx = np.concatenate(train_idx)
+    test_idx = np.concatenate(test_idx)
+
+    under = [g for g, (n_tr, n_te) in counts.items() if n_te < min_test_per_grade]
+    if under:
+        raise ValueError(
+            "Stratified split gives < {} test samples for grade(s) {}.\n"
+            "Per-grade (train, test) counts: {}\n"
+            "Raise --test_frac (currently {:.0f}%) so every grade has enough "
+            "held-out support, or lower --min_test_per_grade.".format(
+                min_test_per_grade, under, counts, test_frac * 100
+            )
+        )
+    return train_idx, test_idx, counts
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--image_dir", type=str, required=True)
@@ -131,7 +185,10 @@ def main():
     p.add_argument("--label_col", type=str, default="diagnosis")
     p.add_argument("--ext", type=str, default=".png", help="image extension if not already in id_col")
     p.add_argument("--clahe", action="store_true", default=False)
-    p.add_argument("--test_frac", type=float, default=0.15)
+    p.add_argument("--test_frac", type=float, default=0.20,
+                   help="held-out fraction of each grade to put in test (stratified; default 0.20 = 80/20)")
+    p.add_argument("--min_test_per_grade", type=int, default=10,
+                   help="hard error if any grade gets fewer than this many test samples")
     p.add_argument("--seed", type=int, default=111)
     args = p.parse_args()
 
@@ -171,10 +228,14 @@ def main():
         n = int((kept_labels == g).sum())
         print(f"  grade {g}: {n} ({100*n/len(kept_labels):.1f}%)")
 
-    rng = np.random.default_rng(args.seed)
-    idx = rng.permutation(len(images))
-    n_test = int(len(images) * args.test_frac)
-    test_idx, train_idx = idx[:n_test], idx[n_test:]
+    train_idx, test_idx, split_counts = stratified_split(
+        kept_labels, args.test_frac, args.seed, args.min_test_per_grade
+    )
+
+    print("\nPer-grade (train, test) split:")
+    for g in range(5):
+        n_tr, n_te = split_counts.get(g, (0, 0))
+        print(f"  grade {g}: train {n_tr}, test {n_te}")
 
     train_path = os.path.join(args.out_dir, f"DRGrading_{args.img_size}x{args.img_size}_train.h5")
     test_path = os.path.join(args.out_dir, f"DRGrading_{args.img_size}x{args.img_size}_test.h5")
