@@ -493,7 +493,7 @@ class ElucidatedDiffusion(nn.Module):
     #############################################
     # training
 
-    ## \Lambda(\Sigma)^0.5
+    ## \Lambda(\Sigma)^0.5 — return Λ^0.5; forward() squares the weighted residual → effective Λ
     def loss_weight(self, cov_diag, labels, null_indx=None):
         # cov_diag is the diagonal of the covariance matrix
         s = self.fn_y2sigma_data(labels) #std
@@ -555,7 +555,7 @@ class ElucidatedDiffusion(nn.Module):
 
         denoised = self.preconditioned_network_forward(noised_images = noised_images, sigma = sigmas, labels=labels, labels_emb = labels_emb, self_cond=self_cond, train_mode=True, keep_mask=keep_mask, null_indx=null_indx)
         
-        loss = (self.loss_weight(cov_diag_y, labels, null_indx).sqrt() * (denoised - images)) ** 2 #batch_size x NC x IMG_SIZE x IMG_SIZE
+        loss = (self.loss_weight(cov_diag_y, labels, null_indx) * (denoised - images)) ** 2 #batch_size x NC x IMG_SIZE x IMG_SIZE
         
         ## apply vicinal weights or not?
         if vicinal_weights is not None:

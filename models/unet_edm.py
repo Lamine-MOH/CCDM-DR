@@ -325,7 +325,7 @@ class UNet_EDM(torch.nn.Module):
         
         self.cond_map = nn.Sequential(
             nn.Linear(label_dim, emb_channels//2),
-            nn.BatchNorm1d(emb_channels//2),
+            nn.LayerNorm(emb_channels//2),
             nn.SiLU(),
         )
         

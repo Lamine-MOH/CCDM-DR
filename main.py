@@ -85,7 +85,9 @@ os.makedirs(path_to_fake_data, exist_ok=True)
 '''                                Make dataset                                     '''
 #######################################################################################
 
-dataset = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=args.num_img_per_label_after_replica)
+# DRGrading: minority replication (--num_img_per_label_after_replica) feeds the
+# label-embedding nets only; the diffusion trainer's real set stays unreplicated.
+dataset = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=args.num_img_per_label_after_replica if args.data_name != "DRGrading" else 0)
     
 train_images, train_labels, train_labels_norm = dataset.load_train_data()
 num_classes = dataset.num_classes
@@ -257,6 +259,8 @@ else:
 
 if args.data_name == "UTKFace":
     dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=200)
+elif args.data_name == "DRGrading":
+    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=args.num_img_per_label_after_replica)
 elif args.data_name in ["Cell200", "RC-49"]:
     dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=0)
 else:
