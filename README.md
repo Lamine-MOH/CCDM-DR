@@ -62,7 +62,8 @@ python downstream_eval/train_dr_classifier.py \
     --backbone resnet50 --epochs 30 --run_name real_plus_synthetic
 
 python downstream_eval/compare_runs.py --results_dir ./downstream_results
-# Frozen 5-seed protocol & results: docs/DOWNSTREAM_RESULTS.md
+# Protocol & results: docs/DOWNSTREAM_RESULTS.md (currently SUPERSEDED —
+# pending regeneration; keep classifier outputs local, downstream_results/ is gitignored)
 # (analysis/seed_report.py aggregates per-seed *_metrics.json into mean ± std)
 ```
 
@@ -70,12 +71,16 @@ The data-preparation scripts produce `{out_dir}/{dataset}/DRGrading_{size}x{size
 (train) and `DRGrading_{size}x{size}_test.h5` (held-out test) with the schema
 `images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades) — pass
 those exact `*_train.h5` / `*_test.h5` paths to the downstream-eval commands.
+The train/test split is **stratified by grade** at `--test_frac` (default 0.20,
+i.e. 80/20) with a `--min_test_per_grade` guard; a within-pool holdout (the
+merged APTOS splits), not the competition's official split.
 
-The frozen 5-seed downstream experiment (protocol, mean±std table, blendA
-provenance, regeneration commands) is in `docs/DOWNSTREAM_RESULTS.md`; a
-second-backbone robustness check (resnet50, same protocol) is documented there
-too. The blendA dataset, its per-grade source h5s, and the inspection montages
-are downloadable from a public Google Drive share (links in the doc).
+The historical 5-seed downstream experiment (protocol, mean±std table, blendA
+provenance, regeneration commands, second-backbone resnet50 check) is in
+`docs/DOWNSTREAM_RESULTS.md` — currently marked **SUPERSEDED — pending
+regeneration** (new 80/20 split + Tier-3 diffusion retrain + val-based classifier
+selection planned; see `docs_private/FIX_PLAN.md`). Classifier outputs should be
+kept local (`downstream_results/` is gitignored and never committed).
 
 See `AGENTS.md` for a denser command/gotcha reference, and the
 "eval-checkpoint gap" section below before you touch `--do_eval`. A
@@ -94,7 +99,7 @@ docs, not needed for reproducing the published results).
 | `trainer.py` | Modified: added a visual-sample batch-size parameter, removed a batch-size-divisibility assertion, guarded covariance updates against empty label sets, and CPU-fallback device handling. |
 | `label_embedding.py`, `utils.py` | Lightly modified (CPU fallback in embedding/prediction device handling). |
 | `data_preparation/get_dataset.py` | **New.** Downloads and normalizes APTOS/IDRiD/DDR/Messidor-2 into a common `{dataset}/Images/` + `labels.csv` structure. |
-| `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop, optional `--clahe`), a held-out `--test_frac` split, and per-grade class-count printouts. |
+| `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop, optional `--clahe`), a **stratified** held-out `--test_frac` split (default 0.20, `--min_test_per_grade` guard), and per-grade train/test count printouts. |
 | `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed). Supports `--dataset` and `--resolution` flags for selective downloads. |
 | `config/DR128/run_train.sh`, `config/DR256/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR: 128×128 (main), 256×256 (high-res), 64×64 (fast debug). All accept `ROOT_PATH`/`DATA_PATH` positionally plus overridable `--num_steps`, `--batch_size`, `--grad_accum`, `--samp_batch_size`, `--resume_step`, `--save_every`, `--skip_final_sampling`. |
 | `generate_from_ckpt.py` | **New.** Samples a trained checkpoint without re-training or loading the training set — the diffusion weights come from `model-{step}.pt`; the label-embedding nets and training yaml must be supplied separately. Writes `generated.h5` in the same schema as the training h5, ready for `train_dr_classifier.py --synthetic_h5`. `--out_dir` defaults to `output/generated_cs{cond_scale}` and the h5 stores its generation attrs (`cond_scale`, `model_ckpt`, ...) so a generated set is self-describing. |
@@ -170,10 +175,12 @@ and the output h5 stores its generation attrs (`cond_scale`, `model_ckpt`,
 grades 0-4) plus `sample_grade_{g}.png` preview grids. `--sampler` can be
 `sde` (default, best quality), `ode`, or `dpmpp` (fastest).
 
-The canonical frozen pipeline picks different CFG strengths per grade
+The historical frozen pipeline picked different CFG strengths per grade
 (grades 0/1/4 at cond_scale 4, grades 2/3 at 1.5, grade 4 real-only), assembled
 with `analysis/merge_h5_by_grade.py` into a blend h5 — see
-`docs/DOWNSTREAM_RESULTS.md` for the exact recipe and results.
+`docs/DOWNSTREAM_RESULTS.md` for the exact recipe and the (superseded) results.
+The regeneration is planned to also sweep alternative cond_scale maps and
+caps across multiple classifier backbones (`docs_private/FIX_PLAN.md`).
 
 ## Directory map
 
@@ -214,7 +221,7 @@ CCDM-DR/
 ├── notebooks/
 │   └── dataset_prepare.ipynb      # end-to-end data-prep walkthrough (Colab-friendly)
 ├── docs/
-│   ├── DOWNSTREAM_RESULTS.md      # frozen 5-seed downstream experiment (tracked)
+│   ├── DOWNSTREAM_RESULTS.md      # historical 5-seed experiment; SUPERSEDED (tracked)
 │   └── full_pipeline.md           # start-to-finish walkthrough
 ├── .env.h5_links                  # Google Drive file IDs (committed)
 ├── requirements.txt
@@ -224,7 +231,9 @@ CCDM-DR/
 
 Note: `docs/` is tracked (`DOWNSTREAM_RESULTS.md` + `full_pipeline.md`). Private
 working notes (e.g. `docs_private/RETRAIN_GUIDE.md`, a retrain-from-scratch
-memo for the owner) live in `docs_private/`, which is gitignored.
+memo for the owner) live in `docs_private/`, which is gitignored. Classifier
+results written to `downstream_results/` are **local-only** (gitignored and
+never committed).
 
 ## Citation
 

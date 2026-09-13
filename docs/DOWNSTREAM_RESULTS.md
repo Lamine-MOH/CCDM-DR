@@ -1,8 +1,38 @@
 # Downstream DR classification — results with grade-conditioned synthetic augmentation
 
-**Status: frozen** (DONE). These are the canonical numbers for the contribution.
+> **Status: SUPERSEDED — regeneration pending.** The numbers below were produced
+> under the *old* protocol (85/15 non-stratified split, best-epoch selection on the
+> test set, `--pretrained` bug, pre-Tier-3 diffusion). They are kept as a complete
+> historical record but are **no longer canonical**. See
+> [New protocol (planned)](#new-protocol-planned) and `docs_private/FIX_PLAN.md`.
+> No table below is edited to reflect new numbers until the regeneration completes.
 
-## How this was reached
+## New protocol (planned)
+
+Driven by the audit + Phase 0/1 fixes in `data_preparation/build_dr_h5.py` and
+`downstream_eval/train_dr_classifier.py` (see `docs_private/FIX_PLAN.md`):
+
+- **Data:** stratified 80/20 train/test split (`--test_frac 0.20 --seed 111`,
+  `--min_test_per_grade 10` guard). Train `DRGrading_128x128_train.h5` (2929 imgs),
+  test `DRGrading_128x128_test.h5` (733 imgs; per-grade g0 361 / g1 74 / g2 200 /
+  g3 39 / g4 59).
+- **Diffusion:** Tier-3 retrain 0→100k (LayerNorm cond_map, EDM loss-weight fix,
+  minority-label embedding replication wired) → regenerate synthetic base sets via
+  `generate_from_ckpt.py --cond_scale <c>` per grade → assemble blendA and
+  cond_scale/cap variants.
+- **Classifier: model selection on a validation split, not the test set.** New
+  `--val_frac 0.12 --val_seed 999` (stratified, carved from the real train h5,
+  identical across arms/seeds); best epoch chosen on **val QWK**; a single final
+  evaluation of those weights on the test set. Reported metrics QWK / ACC /
+  macro-F1 / per-grade recall.
+- **Backbones: multi-backbone, not densenet-only.** Headline arms on
+  `densenet121`, `resnet50`, `efficientnet_b4` (5 seeds 111–115, 30 epochs,
+  Adam lr 1e-4, batch 32); sensitivity arms (cond_scale / cap / grade-4 variants)
+  on `densenet121` (+`resnet50` spot).
+- **`--no-pretrained` is fixed** (was a no-op) and available for ablation.
+- Classifier outputs are written to `downstream_results/` (kept local — not committed).
+
+## How this was reached (historical)
 
 Conditioning fixes (dedicated per-block `affine_cond` for label embeddings,
 decoupled from time; embedding encoders trained 200 epochs, not 10) →

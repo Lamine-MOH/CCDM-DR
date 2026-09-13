@@ -1,5 +1,10 @@
 # analysis/ — post-training diagnosis for grade-conditioning
 
+> Classifier-checkpoint paths below point into `downstream_results/`, which is
+> **local-only** (gitignored, never committed). The 5-seed protocol referenced
+> there is currently SUPERSEDED — pending regeneration after the Tier-3 retrain
+> (see `docs_private/FIX_PLAN.md`); these scripts still run as-is on local outputs.
+
 These scripts answer one question after a retrain: **did the label
 conditioning actually learn this time?** (Pre-fix baseline: RF grade
 separability flat at 0.17-0.44 across checkpoints, synthetic-only classifier

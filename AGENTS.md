@@ -25,12 +25,15 @@ python data_preparation/build_dr_h5.py \
     --image_dir ./data/Aptos/Images \
     --csv_path  ./data/Aptos/labels.csv \
     --out_dir   ./data/DRGrading \
-    --img_size  128
+    --img_size  128 \
+    --test_frac 0.20 --seed 111
 ```
 
 `download_h5.py` reads Google Drive file IDs from `.env.h5_links` and downloads pre-built h5 files into per-dataset subdirectories. `get_dataset.py` downloads the raw dataset and normalizes it into `{save_path}/{dataset_name}/Images/` + `labels.csv` (columns: `id_code, diagnosis`). `build_dr_h5.py` then converts that into the h5 format CCDM-DR expects.
 
 Produces `{out_dir}/{dataset}/DRGrading_{size}x{size}_train.h5` (train) and `DRGrading_{size}x{size}_test.h5` (held-out test). The h5 schema is `images` (uint8, N×3×H×W, CHW) and `labels` (float64, 0-4 ICDR grades).
+
+The train/test split is **STRATIFIED BY GRADE** at `--test_frac` (default `0.20` = 80/20), seeded by `--seed` (default 111). If any grade has fewer than `--min_test_per_grade` test samples (default 10) the script errors and tells you to raise `--test_frac`. Note: for DRGrading the source pool is the merged original train+test+val (per `get_dataset.py`), so this is a within-pool holdout, not the competition's official split.
 
 ### Training
 
@@ -82,11 +85,21 @@ Notes:
 - Checkpoints don't store hyperparameters or RNG state; pass the same flags each phase (batch sampling is with replacement, so continuation is stochastic but correct). The resume path is single-GPU safe (scripts use `CUDA_VISIBLE_DEVICES=0`); multi-GPU resume has a DDP-wrap quirk in `trainer.load()`.
 - The loss log is named `log_loss_steps{train_num_steps}.txt`, so a changed total starts a fresh log file.
 
-> **Retrain-from-scratch guide (post-conditioning-fix):** `docs_private/RETRAIN_GUIDE.md` (private, gitignored — working memo for the owner; may be stale). Public reproducibility relies on `docs/DOWNSTREAM_RESULTS.md` (protocol, provenance, regeneration). Breaks the UNet architecture (dedicated per-block `affine_cond` for label embeddings, decoupled from time) and wires the previously-dead `--epoch_cnn_embed`/`--epoch_cnn_embed_y2cov`/`--epoch_net_y2h`/`--epoch_net_y2cov`/`--batch_size_embed*` flags into `label_embedding.py` (y2h/y2cov encoders now train 200 epochs, not 10). Old `model-*.pt`/`model_y2h`/`model_y2cov` outputs are incompatible — delete before training. Validate with `bash analysis/run_diagnosis.sh ROOT DATA --synth_h5 ...` (A1 trace + A3 montages; optional A2 classifier), see `analysis/README.md`.
+> **Retrain-from-scratch guide (post-conditioning-fix):** `docs_private/RETRAIN_GUIDE.md` (private, gitignored — working memo for the owner; may be stale). Public reproducibility relies on `docs/DOWNSTREAM_RESULTS.md` (protocol, provenance, regeneration). Breaks the UNet architecture (dedicated per-block `affine_cond` for label embeddings, decoupled from time) and wires the previously-dead `--epoch_cnn_embed`/`--epoch_cnn_embed_y2cov`/`--epoch_net_y2h`/`--epoch_net_y2cov`/`--batch_size_embed*` flags into `label_embedding.py` (y2h/y2cov encoders now train 200 epochs, not 10). Old `model-*.pt`/`model_y2h`/`model_y2cov` outputs are incompatible — delete before training. Validate with `bash analysis/run_diagnosis.sh ROOT DATA --synth_h5 ...` (A1 trace + A3 montages; optional A2 classifier), see `analysis/README.md`. **Next full retrain (Tier-3, see `docs_private/FIX_PLAN.md`):** also lands LayerNorm in `unet_edm.cond_map`, the EDM loss-weight fix in `diffusion.py`, and wires `--num_img_per_label_after_replica 1000` (embedding-net minority replication) into all three DR `run_train.sh` configs — invalidating the existing checkpoints again.
 
 ### Downstream evaluation (the primary evidence)
 
 Supported backbones: `resnet50`, `resnet101`, `efficientnet_b3`, `efficientnet_b4`, `efficientnet_b5`, `densenet121`, `densenet201`. All use ImageNet-pretrained weights by default; pass `--no-pretrained` to train from scratch.
+
+> **Planned protocol changes (audit fixes, not yet landed — see `docs_private/FIX_PLAN.md`):**
+> - Best-epoch model selection will move **off the test set** onto a validation split carved from the
+>   real train h5 (`--val_frac 0.12 --val_seed 999`, stratified, identical across arms/seeds), with a
+>   single final test evaluation of the val-selected weights.
+> - `--no-pretrained` is currently a **no-op** (`action="store_true"` + `default=True`); the flag fix
+>   (`BooleanOptionalAction`) lands in Phase 1.
+> - The multi-backbone headline protocol is `densenet121` + `resnet50` + `efficientnet_b4`.
+> - Generated synthetic sets self-describe `edm_sigma_data_type` once the sigma-data metadata lands.
+> Until those land, results below reflect best-epoch-on-test selection (optimistic).
 
 `--synthetic_cap_per_grade N` limits synthetic samples per DR grade (0-4) before concatenation with real data. Useful for sweeping synthetic-to-real ratios.
 
@@ -109,7 +122,7 @@ python downstream_eval/train_dr_classifier.py \
 python downstream_eval/compare_runs.py --results_dir ./downstream_results
 ```
 
-Outputs per run: `{run_name}_best.pth` (best model weights by QWK) and `{run_name}_metrics.json` (accuracy, macro_f1, QWK, per-grade recall). `compare_runs.py` aggregates all `*_metrics.json` into a comparison table saved as `comparison_table.csv`.
+Outputs per run: `{run_name}_best.pth` (model weights) and `{run_name}_metrics.json` (accuracy, macro_f1, QWK, per-grade recall). `compare_runs.py` aggregates all `*_metrics.json` into a comparison table saved as `comparison_table.csv`. **Classifier results are kept local**: `downstream_results/` is gitignored and must never be committed.
 
 ## Critical gotchas
 
@@ -132,8 +145,8 @@ Outputs per run: `{run_name}_best.pth` (best model weights by QWK) and `{run_nam
 - `data_preparation/get_dataset.py` — Downloads and normalizes DR datasets into a common structure.
 - `data_preparation/build_dr_h5.py` — Converts normalized dataset into h5 format for training.
 - `data_preparation/download_h5.py` — Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed).
-- `generate_from_ckpt.py` — Samples a trained checkpoint without re-training (needs `model-*.pt` + embedding nets + training yaml); writes `generated.h5` for `train_dr_classifier.py --synthetic_h5`. `--out_dir` defaults to `output/generated_cs{cond_scale}`, and the h5 stores generation attrs (`cond_scale`, `model_ckpt`, `sampler`, ...) so a generated set is self-describing.
-- `docs/DOWNSTREAM_RESULTS.md` — the canonical (frozen, 5-seed) downstream experiment: protocol, mean±std table, interpretation, blendA provenance, and regeneration commands.
+- `generate_from_ckpt.py` — Samples a trained checkpoint without re-training (needs `model-*.pt` + embedding nets + training yaml); writes `generated.h5` for `train_dr_classifier.py --synthetic_h5`. It reads `edm_sigma_data.json` persisted next to the training checkpoints so the exact sigma-data configuration (`default`/`local`) is reproduced (planned — currently falls back to `default` 0.5). `--out_dir` defaults to `output/generated_cs{cond_scale}`, and the h5 stores generation attrs (`cond_scale`, `model_ckpt`, `sampler`, ...) so a generated set is self-describing.
+- `docs/DOWNSTREAM_RESULTS.md` — **superseded** (status now `SUPERSEDED — pending regeneration`): historical 5-seed protocol + mean±std tables, blendA provenance, Batch-A/E16/C9 records. New numbers come from `docs_private/FIX_PLAN.md` + regeneration after the Tier-3 retrain.
 
 ## Dependencies
 
