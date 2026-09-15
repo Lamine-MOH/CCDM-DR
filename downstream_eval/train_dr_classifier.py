@@ -377,6 +377,7 @@ def main():
 
     best_val_qwk = -1.0
     best_epoch = 0
+    best_val_metrics = None
     for epoch in range(args.epochs):
         model.train()
         running_loss = 0.0
@@ -402,6 +403,7 @@ def main():
         if val_metrics["qwk"] > best_val_qwk:
             best_val_qwk = val_metrics["qwk"]
             best_epoch = epoch + 1
+            best_val_metrics = val_metrics
             torch.save(model.state_dict(), os.path.join(args.out_dir, f"{args.run_name}_best.pth"))
 
     # Single final evaluation of the val-selected weights on the held-out test set
@@ -427,6 +429,8 @@ def main():
     test_metrics["best_epoch"] = best_epoch
     test_metrics["val_qwk"] = best_val_qwk
     test_metrics["selection_on"] = selection
+    if best_val_metrics is not None:
+        test_metrics["val_per_class_report"] = best_val_metrics["per_class_report"]
 
     out_path = os.path.join(args.out_dir, f"{args.run_name}_metrics.json")
     with open(out_path, "w") as f:
