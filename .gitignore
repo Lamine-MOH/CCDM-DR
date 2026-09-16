@@ -32,6 +32,7 @@ Thumbs.db
 venv/
 .venv/
 env/
+AGENTS.md
 
 # Jupyter
 .ipynb_checkpoints/
