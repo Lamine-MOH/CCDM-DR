@@ -14,12 +14,13 @@
 #   1. gen       F1/F2/F3: all grades 0-4 @ cond_scale 4.0/2.5/1.5, nfake/grade
 #   2. sweep     uni_cs1.5/2.5/4.0 classifier runs on the sensitivity backbone
 #                at the FULL seed set (5 seeds) — the pre-blend cond_scale sweep
-#   3. blends    frozen recipe (blendA g4 real-only, blendA_plus_g4, blendA_cap1500)
-#                + blob_sel.h5 from analysis/select_blend_cs.py (mean VAL per-grade
-#                recall across the sweep, source per grade from its winning cs)
-#   4. eval      headline {real_only, blendA, blend_sel} x headline backbones x
-#                seeds; blendA_plus_g4 + cap variants at the explore seed (promote
-#                via --promote for the full seed set)
+#   3. blends    frozen recipe (blendA g4 real-only, blendA_plus_g4, blendA_cap1500,
+#                blendA_g3cs4 probe) + blend_sel.h5 from analysis/select_blend_cs.py
+#                (mean VAL per-grade recall across the sweep, source per grade from
+#                its winning cs)
+#   4. eval      headline {real_only, blendA, blendA_g3cs4, blend_sel} x headline
+#                backbones x seeds; blendA_plus_g4 + cap variants at the explore
+#                seed (promote via --promote for the full seed set)
 #   5. report    compare_runs.py + per-backbone seed_report.py
 #
 # Optional flags:
@@ -225,12 +226,12 @@ fi
 # ---------------------------------------------------------------------------
 blend() {
     local out="$1" cap="$2" override="$3"
+    local sources="${4:-0=${GEN_DIR}/generated_cs4.0/generated.h5 1=${GEN_DIR}/generated_cs4.0/generated.h5 4=${GEN_DIR}/generated_cs4.0/generated.h5 2=${GEN_DIR}/generated_cs1.5/generated.h5 3=${GEN_DIR}/generated_cs1.5/generated.h5}"
     local h5="${BLEND_DIR}/${out}.h5"
     if [ -f "$h5" ]; then
         echo "  [skip] $h5 exists"
         return 0
     fi
-    local sources="0=${GEN_DIR}/generated_cs4.0/generated.h5 1=${GEN_DIR}/generated_cs4.0/generated.h5 4=${GEN_DIR}/generated_cs4.0/generated.h5 2=${GEN_DIR}/generated_cs1.5/generated.h5 3=${GEN_DIR}/generated_cs1.5/generated.h5"
     local ov=""
     [ -n "$override" ] && ov="--caps_override $override"
     run python analysis/merge_h5_by_grade.py \
@@ -250,6 +251,7 @@ if [ "$DO_BLEND" -eq 1 ]; then
     blend "blendA"        1000 "4=0"
     blend "blendA_plus_g4" 1000 ""
     blend "blendA_cap1500" 1500 "4=0"
+    blend "blendA_g3cs4"   1000 "4=0" "0=${GEN_DIR}/generated_cs4.0/generated.h5 1=${GEN_DIR}/generated_cs4.0/generated.h5 4=${GEN_DIR}/generated_cs4.0/generated.h5 2=${GEN_DIR}/generated_cs1.5/generated.h5 3=${GEN_DIR}/generated_cs4.0/generated.h5"
 
     if [ "$DO_EVAL" -eq 1 ] && [ -f "${RESULTS_DIR}/${SENS_BACKBONE}_uni_cs4.0_s${EXPLORE_SEED}_metrics.json" ]; then
         pools=""
@@ -277,6 +279,7 @@ arm_synth() {
     case "$arm" in
         real_only)          echo "" ;;
         blendA)             echo "${BLEND_DIR}/blendA.h5:1000" ;;
+        blendA_g3cs4)       echo "${BLEND_DIR}/blendA_g3cs4.h5:1000" ;;
         blendA_plus_g4)     echo "${BLEND_DIR}/blendA_plus_g4.h5:1000" ;;
         blendA_cap500)      echo "${BLEND_DIR}/blendA.h5:500" ;;
         blendA_cap1500)     echo "${BLEND_DIR}/blendA_cap1500.h5:1500" ;;
@@ -299,7 +302,11 @@ is_promoted() {
 if [ "$DO_EVAL" -eq 1 ]; then
     pmessage "Stage 4/5 — headline arms x {${HEADLINE_BACKBONES}}"
     for backbone in $HEADLINE_BACKBONES; do
-        for arm in real_only blendA blend_sel; do
+        for arm in real_only blendA blendA_g3cs4 blend_sel; do
+            if [ "$arm" = "blendA_g3cs4" ] && [ ! -f "${BLEND_DIR}/blendA_g3cs4.h5" ]; then
+                echo "  [skip] blendA_g3cs4 arm: ${BLEND_DIR}/blendA_g3cs4.h5 missing"
+                continue
+            fi
             if [ "$arm" = "blend_sel" ] && [ ! -f "${BLEND_DIR}/blend_sel.h5" ]; then
                 echo "  [skip] blend_sel arm: ${BLEND_DIR}/blend_sel.h5 missing"
                 continue
@@ -344,13 +351,15 @@ if [ "$DO_EVAL" -eq 1 ]; then
         for s in $SEEDS; do
             [ -f "${RESULTS_DIR}/${backbone}_real_only_s${s}_metrics.json" ] || all_present=0
             [ -f "${RESULTS_DIR}/${backbone}_blendA_s${s}_metrics.json" ] || all_present=0
+            [ -f "${RESULTS_DIR}/${backbone}_blendA_g3cs4_s${s}_metrics.json" ] || all_present=0
             [ -f "${RESULTS_DIR}/${backbone}_blend_sel_s${s}_metrics.json" ] || all_present=0
         done
         [ "$all_present" -eq 1 ] || continue
         extra=(
-            --group real_only $(for s in $SEEDS; do echo "${backbone}_real_only_s${s}"; done)
-            --group blendA     $(for s in $SEEDS; do echo "${backbone}_blendA_s${s}"; done)
-            --group blend_sel  $(for s in $SEEDS; do echo "${backbone}_blend_sel_s${s}"; done)
+            --group real_only     $(for s in $SEEDS; do echo "${backbone}_real_only_s${s}"; done)
+            --group blendA        $(for s in $SEEDS; do echo "${backbone}_blendA_s${s}"; done)
+            --group blendA_g3cs4  $(for s in $SEEDS; do echo "${backbone}_blendA_g3cs4_s${s}"; done)
+            --group blend_sel     $(for s in $SEEDS; do echo "${backbone}_blend_sel_s${s}"; done)
         )
         for arm in $PROMOTE; do
             ok=1
@@ -365,5 +374,5 @@ fi
 
 pmessage "Done. Artifacts under:"
 echo "  generated : $GEN_DIR/generated_cs{4.0,2.5,1.5}/generated.h5"
-echo "  blends    : $BLEND_DIR/{blendA,blendA_plus_g4,blendA_cap1500,blend_sel}.h5"
+echo "  blends    : $BLEND_DIR/{blendA,blendA_g3cs4,blendA_plus_g4,blendA_cap1500,blend_sel}.h5"
 echo "  results   : $RESULTS_DIR/  (run compare_runs.py to refresh the table)"
