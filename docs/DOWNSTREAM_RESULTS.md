@@ -1,36 +1,179 @@
 # Downstream DR classification — results with grade-conditioned synthetic augmentation
 
-> **Status: SUPERSEDED — regeneration pending.** The numbers below were produced
-> under the *old* protocol (85/15 non-stratified split, best-epoch selection on the
-> test set, `--pretrained` bug, pre-Tier-3 diffusion). They are kept as a complete
-> historical record but are **no longer canonical**. See
-> [New protocol (planned)](#new-protocol-planned) and `docs_private/FIX_PLAN.md`.
-> No table below is edited to reflect new numbers until the regeneration completes.
+> **Status: CANONICAL section = "Exp 3" (2026-09-16).** Results below in the
+> [Exp 3](##Exp 3 — Tier-3 retrain + val-based multi-backbone matrix (executed 2026-09-16)) section were
+> produced under the post-Tier-3 protocol (stratified 80-20 split, best-epoch
+> selection on a validation split, `--pretrained`/augmentation/seeding fixes).
+> Everything below that section is a complete **historical** record from the
+> *old* protocol (85/15 non-stratified split, best-epoch selection on the test
+> set, `--pretrained` bug, pre-Tier-3 diffusion) and is **no longer canonical**.
 
-## New protocol (planned)
+## Exp 3 — Tier-3 retrain + val-based multi-backbone matrix (executed 2026-09-16)
 
-Driven by the audit + Phase 0/1 fixes in `data_preparation/build_dr_h5.py` and
-`downstream_eval/train_dr_classifier.py` (see `docs_private/FIX_PLAN.md`):
+Canonical. Produced after the Tier-3 retrain (LayerNorm `cond_map`, EDM
+loss-weight fix, minority-label embedding replication) with all Phase 1 audit
+fixes landed (val selection, `--no-pretrained` fix, augments, seeding).
+Orchestrated end-to-end by `analysis/run_matrix.sh`.
 
-- **Data:** stratified 80/20 train/test split (`--test_frac 0.20 --seed 111`,
-  `--min_test_per_grade 10` guard). Train `DRGrading_128x128_train.h5` (2929 imgs),
-  test `DRGrading_128x128_test.h5` (733 imgs; per-grade g0 361 / g1 74 / g2 200 /
-  g3 39 / g4 59).
-- **Diffusion:** Tier-3 retrain 0→100k (LayerNorm cond_map, EDM loss-weight fix,
-  minority-label embedding replication wired) → regenerate synthetic base sets via
-  `generate_from_ckpt.py --cond_scale <c>` per grade → assemble blendA and
-  cond_scale/cap variants.
-- **Classifier: model selection on a validation split, not the test set.** New
-  `--val_frac 0.12 --val_seed 999` (stratified, carved from the real train h5,
-  identical across arms/seeds); best epoch chosen on **val QWK**; a single final
-  evaluation of those weights on the test set. Reported metrics QWK / ACC /
-  macro-F1 / per-grade recall.
-- **Backbones: multi-backbone, not densenet-only.** Headline arms on
-  `densenet121`, `resnet50`, `efficientnet_b4` (5 seeds 111–115, 30 epochs,
-  Adam lr 1e-4, batch 32); sensitivity arms (cond_scale / cap / grade-4 variants)
-  on `densenet121` (+`resnet50` spot).
-- **`--no-pretrained` is fixed** (was a no-op) and available for ablation.
-- Classifier outputs are written to `downstream_results/` (kept local — not committed).
+### Protocol (executed)
+
+- **Data:** stratified 80/20 (`--test_frac 0.20 --seed 111`); train 2929
+  (g0..g4 = 1444/296/799/154/236), test 733 (g0..g4 = 361/74/200/39/59).
+- **Classifier selection:** per-run val carve from the real train h5
+  (`--val_frac 0.12 --val_seed 999`, deterministic, grade-stratified, identical
+  across arms/seeds); best epoch by **val QWK**; single final test evaluation.
+  Reported: QWK / ACC / macro-F1 / per-grade recall.
+- **Backbones:** `densenet121`, `resnet50`, `efficientnet_b4`; seeds 111–115;
+  30 epochs; Adam lr 1e-4; batch 32; ImageNet-pretrained.
+- **Generation** (`generate_from_ckpt.py`, `model-100000.pt` EMA, sampler `sde`
+  32 steps): three all-grades passes F1/F2/F3 →
+  `generated_cs{4.0,2.5,1.5}/generated.h5` (cond_scale 4.0 / 2.5 / 1.5),
+  nfake ≥ 2000/grade.
+- **Arms:** `real_only`; `blendA` (frozen recipe: g0/1/4@cs4.0, g2/3@cs1.5,
+  cap 1000/grade, **g4 real-only**); `blend_sel` (data-driven per-grade cs);
+  sensitivities `blendA_plus_g4` (all-synthetic g4), `blendA_cap500`,
+  `blendA_cap1500`.
+- **Integrity:** 65 runs; every `selection_on == "val"`, `val_seed = 999`;
+  seed coverage complete (111 has all single-seed arms; 112–115 the 5-seed grid);
+  no missing/partial runs. Results are local-only (`downstream_results/Exp 3`).
+
+### Sweep & selection (densenet121 — mean VAL per-grade recall over 5 seeds)
+
+| grade | cs1.5 | cs2.5 | cs4.0 | real-only | argmax |
+|---|---|---|---|---|---|
+| g0 | 0.971 | 0.977 | 0.978 | 0.979 | cs4.0 |
+| g1 | 0.633 | 0.594 | **0.644** | 0.628 | cs4.0 |
+| g2 | **0.863** | 0.840 | 0.808 | 0.777 | cs1.5 |
+| g3 | 0.356 | 0.411 | **0.500** | 0.322 | cs4.0 |
+| g4 | **0.657** | 0.579 | 0.579 | 0.564 | cs1.5 |
+
+`blend_sel` = per-grade argmax (g0/g1@cs4, g2@cs1.5, g3@cs4, g4@cs1.5-synth),
+differing from frozen blendA only at **g3 (cs1.5→cs4)** and **g4 (real→cs1.5
+synth)**. Selection used only the val split.
+
+### Headline (5 seeds, mean ± std) — QWK / ACC / macro-F1
+
+| backbone | real_only | blendA | blend_sel |
+|---|---|---|---|
+| densenet121 | 0.8924±0.0090 / 0.8265 / 0.6673 | 0.8930±0.0075 / 0.8191 / 0.6373 | 0.8852±0.0028 / 0.8221 / 0.6498 |
+| resnet50 | 0.8812±0.0063 / 0.8128 / 0.6441 | **0.8939±0.0063** / 0.8256 / 0.6605 | 0.8891±0.0108 / 0.8240 / 0.6508 |
+| efficientnet_b4 | 0.8641±0.0104 / 0.7700 / 0.6119 | 0.8491±0.0068 / 0.7787 / 0.5830 | 0.8505±0.0123 / 0.7853 / 0.6028 |
+
+### Paired deltas over real_only (mean Δ; seed wins +k/−m of 5)
+
+| backbone | metric | blendA − real | blend_sel − real |
+|---|---|---|---|
+| densenet121 | QWK | +0.0006 (+2/−3) | −0.0072 (+2/−3) |
+| densenet121 | ACC | −0.0074 (+2/−3) | −0.0044 (+3/−2) |
+| densenet121 | macro-F1 | −0.0300 (+1/−4) | −0.0175 (+0/−5) |
+| resnet50 | QWK | **+0.0126 (+5/−0)** | +0.0078 (+3/−2) |
+| resnet50 | ACC | +0.0128 (+4/−1) | +0.0112 (+4/−1) |
+| resnet50 | macro-F1 | +0.0164 (+4/−1) | +0.0067 (+4/−1) |
+| efficientnet_b4 | QWK | −0.0150 (+1/−4) | −0.0136 (+1/−4) |
+| efficientnet_b4 | ACC | +0.0087 (+3/−1) | +0.0153 (+4/−1) |
+| efficientnet_b4 | macro-F1 | −0.0289 (+0/−5) | −0.0091 (+2/−3) |
+
+`blend_sel` vs `blendA` loses QWK on every backbone (−0.0078 / −0.0048 / +0.0014)
+but recovers ACC / macro-F1 on densenet121 (+3/−2, +4/−1) and efficientnet (+4/−1).
+
+### Per-grade test recall (densenet121, mean ± std)
+
+| arm | g0 | g1 | g2 | g3 | g4 |
+|---|---|---|---|---|---|
+| real_only | 0.986±0.003 | 0.573±0.030 | 0.798±0.028 | 0.359±0.018 | 0.576±0.024 |
+| blendA | 0.983±0.003 | 0.530±0.061 | 0.816±0.033 | **0.221±0.047** | 0.586±0.052 |
+| blend_sel | 0.983±0.005 | 0.551±0.066 | 0.820±0.036 | 0.318±0.095 | 0.515±0.054 |
+
+### Probes (densenet121, seed 111)
+
+| arm | QWK | note |
+|---|---|---|
+| real_only | 0.8853 | baseline |
+| blendA (g4 real-only, cap 1000) | **0.9026** | best — the frozen recipe |
+| blendA_cap500 | 0.8995 | lower cap ~ neutral |
+| blendA_cap1500 | 0.8940 | higher cap slightly worse |
+| blendA_plus_g4 (synthetic g4) | 0.8874 | **g4 recall drops on all backbones** (den 0.542 vs 0.644; r50 0.559 vs 0.661; eff 0.373 vs 0.593) → g4 stays real-only |
+
+### Interpretation
+
+- **Backbone heterogeneity is the honest headline.** blendA is seed-clean positive
+  on **resnet50** (QWK +0.0126, +5/−0; ACC and macro-F1 +4/−1), essentially flat on
+  **densenet121** (QWK +0.0006, mixed signs), and negative on **efficientnet_b4**
+  (QWK −0.015, macro-F1 −0.029 with 0/5 wins). The augmentation benefit is
+  therefore real but architecture-dependent.
+- **The gain is ordinal (QWK), not per-class recall.** Test per-grade recall is
+  real-only-best for g1/g3/g4 and synthetic-best only for g2, yet blendA still
+  lifts resnet50 QWK in all 5 seeds — the benefit flows through confusion/ordinal
+  structure, not class-level recall. This also explains the macro-F1 drops (a
+  recall-weighted metric).
+- **`blend_sel` (per-grade cs selected on val recall) is a negative result** — it
+  never beats blendA on QWK, because per-grade val recall does not transfer to
+  test (see below).
+- **Synthetic g4 is toxic** on all three backbones → the frozen "g4 real-only"
+  decision is validated and kept.
+- **g3 is the one actionable per-grade finding:** blendA's cs1.5 g3 images
+  coincide with the worst test cell (0.221); the sel map's g3@cs4 recovers it
+  (0.318). The follow-up probe `blendA_g3cs4` (exact blendA, only g3@cs4) tests
+  whether that recovery is real and QWK-neutral on all 3 backbones.
+
+### Selection-transfer analysis (zero-GPU; why not to over-engineer selection)
+
+Per-grade val recall vs test recall across {cs1.5, cs2.5, cs4.0, real} (Pearson r
+over per-condition means, densenet121): g0 +0.94, g2 +0.57, but **g1 −0.21,
+g3 −0.45, g4 −0.52** — the ordering **anti-transfers** for the minority grades
+(val per-grade cells n = 173/36/96/18/28 vs test n = 361/74/200/39/59; 5-seed val
+recall SD up to ±0.10 on g3/g4). No candidate rule (argmax-mean, max-min,
+real-gated, adjacent-aware) reproduces the frozen recipe (2/5, 0/5, 1/5, 1/5
+matches), and even a generous real-gated rule keeps selecting synthetic g4.
+Conclusion: **per-grade selection grids (larger val split, k-fold) are low-ROI at
+this data scale**; we keep the frozen blendA recipe and report per-grade selection
+as an explicit limitation. (A QWK-based selection variant is also unreliable here:
+`blend_sel` had the best val QWK yet the worst test QWK.)
+
+### Follow-up probe — `blendA_g3cs4` (launched 2026-09-16)
+
+Exact blendA except **g3@cs4.0** (g0/1/4@cs4, g2@cs1.5, g3@cs4, cap 1000, g4
+real-only). Tests whether g3's test-recall recovery (0.221→0.318) is real and
+QWK-neutral on all 3 backbones × 5 seeds. Results will be appended to this section.
+
+### Backbone rationale & choice
+
+The three headline backbones cover distinct architectural design paradigms, each
+with published 5-class DR-grading usage on APTOS fundus data and standard
+ImageNet transfer-learning precedent:
+
+- **ResNet-50** — He et al., *Deep Residual Learning for Image Recognition*, CVPR
+  2016. Residual skip connections for very deep CNNs. Documented APTOS
+  comparisons: Dongre et al. 2026 (controlled APTOS 5-class study; ResNet50 96%
+  val acc; ImageNet pre-training worth +43 pts over random init); Mohan Kumar &
+  Shalini 2025 (best APTOS test acc 86.5% of the models compared); Sankara Babu
+  et al. 2023 (79.3%, above DenseNet on the same setup).
+- **DenseNet-121** — Huang et al., *Densely Connected Convolutional Networks*,
+  CVPR 2017. Dense connectivity → feature reuse, parameter-efficient. Widely
+  adopted for DR grading: Sruthi et al. 2023 (Appl. Sci.; best across
+  APTOS/EyePACS/ODIR, ≥98.5% accuracy); Dixit et al. 2025 (81% on 5-class APTOS);
+  Retima et al. 2025 (99%/81% binary/quinary); an APTOS optimizer study 2025
+  (DenseNet121+SGD 96.9% test acc).
+- **EfficientNet-B4** — Tan & Le, *EfficientNet: Rethinking Model Scaling for
+  Convolutional Neural Networks*, ICML 2019. NAS + compound scaling of
+  depth/width/resolution. APTOS 2019 leaderboard relied on EfficientNet ensembles
+  (top solutions on B5/B7; an independent B3/B5 entry reached QWK 0.906);
+  EfficientNet-B3/B4 repeatedly best on larger, imbalanced DR datasets.
+
+Rationale: (i) architectural diversity (residual / dense / compound-scaled);
+(ii) all three ship ImageNet-pretrained torchvision weights → identical transfer
+protocol; (iii) all three have direct, citable APTOS DR-grading track records;
+(iv) they bracket the parameter range feasible for 30-epoch training at 128×128
+under a fixed budget (densenet121 ≈ 7 M, resnet50 ≈ 23 M, efficientnet_b4 ≈ 19 M).
+
+**Additional backbones (documented, deferred):** torchvision-resolvable
+candidates for a later expansion — `resnext50_32x4d` (SE-ResNeXt family behind
+APTOS top solutions), `efficientnet_b5` (APTOS 2019 top-3% solutions),
+`resnet101` / `densenet201` (deeper siblings, already supported),
+`mobilenet_v2` (lightweight bracket), `inception_v3` (provenance: Gulshan et al.,
+JAMA 2016; needs a 299-native input-size path). Not pursued at 128:
+ViT/DINOv2/Swin (resolution-limited — see historical C9 below). Budget per added
+headline backbone ≈ 4 arms × 5 seeds.
 
 ## How this was reached (historical)
 

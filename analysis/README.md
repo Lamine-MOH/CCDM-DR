@@ -1,9 +1,32 @@
 # analysis/ — post-training diagnosis for grade-conditioning
 
 > Classifier-checkpoint paths below point into `downstream_results/`, which is
-> **local-only** (gitignored, never committed). The 5-seed protocol referenced
-> there is currently SUPERSEDED — pending regeneration after the Tier-3 retrain
-> (see `docs_private/FIX_PLAN.md`); these scripts still run as-is on local outputs.
+> **local-only** (gitignored, never committed). **Current evidence:** the Exp-3
+> matrix (2026-09-16, post-Tier-3, val-based multi-backbone) is canonical — see the
+> Exp 3 section of `docs/DOWNSTREAM_RESULTS.md` and run it with `run_matrix.sh`
+> below. The older scripts in this file (diagnosis / embedding probes / blend)
+> still run as-is on local outputs; `run_downstream_protocol.sh` + `seed_report.sh`
+> belong to the **historical** 5-seed protocol (best-epoch-on-test, pre-fix).
+
+## Orchestrator: `run_matrix.sh` + `select_blend_cs.py`
+
+The post-retrain evidence is produced end-to-end by these two (see also
+`docs/DOWNSTREAM_RESULTS.md` → Exp 3):
+
+- **`run_matrix.sh ROOT DATA --model_ckpt <path>`** — required direct checkpoint
+  path (Tier-3 `model-100000.pt`); stages: generation (`--gen`) → cond_scale
+  sweep per grade → `blend()` arms → per-arm classifier training (5 seeds
+  densenet/resnet/eff, val QWK selection) → `seed_report`. Idempotent
+  (skips existing runs/results on the local box and TM); run with `--dry-run` to
+  inspect without launching. Blend arms include the frozen `blendA`, the
+  data-driven `blend_sel`, and the `blendA_g3cs4` probe.
+- **`select_blend_cs.py`** — reads the sweep's per-grade per-cs VAL recall
+  (mean over seeds), picks each grade's best cs (argmax), and assembles
+  `blend_sel.h5`. Do not treat its output as canonical: per-grade val recall
+  anti-transfers to test (g3/g4 Pearson < 0), so the frozen `blendA` recipe is
+  the headline arm and per-grade selection is a documented limitation.
+
+### Merge helper `merge_h5_by_grade.py` — per-grade blend of per-scale h5 files
 
 These scripts answer one question after a retrain: **did the label
 conditioning actually learn this time?** (Pre-fix baseline: RF grade
