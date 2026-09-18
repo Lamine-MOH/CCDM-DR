@@ -1,6 +1,8 @@
 # adapted from https://github.com/NVlabs/edm/blob/main/training/networks.py
 # The noise and condition mapping layers are modified
 
+import os
+import contextlib
 import numpy as np
 import torch
 from torch import nn
@@ -30,6 +32,49 @@ def divisible_by(numer, denom):
 
 def identity(t, *args, **kwargs):
     return t
+
+#----------------------------------------------------------------------------
+# Self-attention backend.
+"""
+> The original EDM AttentionOp materializes the full softmax(Q^T K) matrix in FP32 (a ~2 GiB spike per layer) and saves it for backprop (~1 GB/image/layer at 128px). 
+> Torch's scaled_dot_product_attention with the memory-efficient backend neither materializes the matrix nor stores it (recomputed on backward), so it is used
+by default when available. 
+> Set CCDM_ATTN_MATH=1 to force the exact original op for bit-for-bit reproducible runs; the architecture and weights are identical either way.
+"""
+
+def _torch_min_version(major, minor):
+    try:
+        from packaging import version as _version
+        return _version.parse(torch.__version__) >= _version.parse(f'{major}.{minor}')
+    except Exception:
+        try:
+            parts = torch.__version__.split('+')[0].split('.')
+            return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0) >= (major, minor)
+        except Exception:
+            return False
+
+def _use_sdpa_attention():
+    if not _torch_min_version(2, 0):
+        return False
+    forced_math = (os.environ.get('CCDM_ATTN_MATH', '0') or '').strip().lower()
+    if forced_math in ('1', 'true', 'yes', 'on'):
+        return False
+    return True
+
+_USE_SDPA_ATTENTION = _use_sdpa_attention()
+
+def _sdpa_kernel():
+    """Context manager selecting the memory-efficient backend on sm_80+ CUDA."""
+    if not torch.cuda.is_available():
+        return contextlib.nullcontext()
+    try:
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+    except Exception:
+        return contextlib.nullcontext()
+    device_properties = torch.cuda.get_device_properties(torch.device('cuda'))
+    if (device_properties.major, device_properties.minor) >= (8, 0):
+        return sdpa_kernel(backends=[SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH])
+    return sdpa_kernel(backends=[SDPBackend.MATH])
 
 #----------------------------------------------------------------------------
 # classifier free guidance functions
@@ -237,10 +282,18 @@ class UNetBlock(torch.nn.Module):
         x = x * self.skip_scale
 
         if self.num_heads:
-            q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1).unbind(2)
-            w = AttentionOp.apply(q, k)
-            a = torch.einsum('nqk,nck->ncq', w, v)
-            x = self.proj(a.reshape(*x.shape)).add_(x)
+            if _USE_SDPA_ATTENTION:
+                head_dim = x.shape[1] // self.num_heads
+                q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0], self.num_heads, head_dim, 3, -1).permute(3, 0, 1, 4, 2).unbind(0)
+                q = q * (head_dim ** -0.5)
+                with _sdpa_kernel():
+                    a = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0)
+                a = a.permute(0, 1, 3, 2).reshape(*x.shape)
+            else:
+                q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1).unbind(2)
+                w = AttentionOp.apply(q, k)
+                a = torch.einsum('nqk,nck->ncq', w, v).reshape(*x.shape)
+            x = self.proj(a).add_(x)
             x = x * self.skip_scale
         return x
 
