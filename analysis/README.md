@@ -1,17 +1,18 @@
 # analysis/ — post-training diagnosis for grade-conditioning
 
 > Classifier-checkpoint paths below point into `downstream_results/`, which is
-> **local-only** (gitignored, never committed). **Current evidence:** the Exp-3
-> matrix (2026-09-16, post-Tier-3, val-based multi-backbone) is canonical — see the
-> Exp 3 section of `docs/DOWNSTREAM_RESULTS.md` and run it with `run_matrix.sh`
-> below. The older scripts in this file (diagnosis / embedding probes / blend)
-> still run as-is on local outputs; `run_downstream_protocol.sh` + `seed_report.sh`
-> belong to the **historical** 5-seed protocol (best-epoch-on-test, pre-fix).
+> **local-only** (gitignored, never committed). **Current evidence:** the Exp-4
+> matrix (2026-09-16, post-Tier-3, val-based multi-backbone, 80 runs) is canonical
+> — the results live in local `downstream_results/Exp 4` and are produced with
+> `run_matrix.sh` below. The older scripts in this file (diagnosis / embedding
+> probes / blend) still run as-is on local outputs; `run_downstream_protocol.sh` +
+> `seed_report.sh` belong to the **historical** 5-seed protocol (best-epoch-on-test,
+> pre-fix).
 
 ## Orchestrator: `run_matrix.sh` + `select_blend_cs.py`
 
-The post-retrain evidence is produced end-to-end by these two (see also
-`docs/DOWNSTREAM_RESULTS.md` → Exp 3):
+The post-retrain evidence is produced end-to-end by these two (results land in
+`downstream_results/Exp 4`):
 
 - **`run_matrix.sh ROOT DATA --model_ckpt <path>`** — required direct checkpoint
   path (Tier-3 `model-100000.pt`); stages: generation (`--gen`) → cond_scale
@@ -19,7 +20,9 @@ The post-retrain evidence is produced end-to-end by these two (see also
   densenet/resnet/eff, val QWK selection) → `seed_report`. Idempotent
   (skips existing runs/results on the local box and TM); run with `--dry-run` to
   inspect without launching. Blend arms include the frozen `blendA`, the
-  data-driven `blend_sel`, and the `blendA_g3cs4` probe.
+  data-driven `blend_sel`, and the promoted headline probe `blendA_g3cs4`.
+  **Canonical evidence = `downstream_results/Exp 4`** (80-run full matrix;
+  overlapping arms reproduce the earlier Exp 3 exactly).
 - **`select_blend_cs.py`** — reads the sweep's per-grade per-cs VAL recall
   (mean over seeds), picks each grade's best cs (argmax), and assembles
   `blend_sel.h5`. Do not treat its output as canonical: per-grade val recall
@@ -86,8 +89,8 @@ are the ones that land in the blend.
 
 ## Batch A — post-hoc synthetic quality & classifier upgrades (no generator retrain)
 
-Three scripts implement the literature-driven experiments of
-`docs_private/LITERATURE_REVIEW.md` (A1/A2/C9).
+Three scripts implement the literature-driven experiments A1/A2/C9 of the
+Batch-A review.
 
 ### `filter_synthetic.py` — semantic filter of the generated pool (A1)
 
@@ -116,8 +119,8 @@ survive an ensemble of real-trained graders"). Feed the filtered h5 into
 **Result (A1, negative):** at matched quantity a filtered blend did NOT beat a
 random draw from the unfiltered pools on the 5-seed densenet protocol (filtered
 ≈ real_only; random > filtered on acc/macro-F1/QWK) — the blendA gain is
-volume+diversity, not label purity. Full table + interpretation in
-`docs/DOWNSTREAM_RESULTS.md` §Batch A.
+volume+diversity, not label purity. (Superseded historical result; the full
+table and interpretation are reported in the paper.)
 
 Note on `--dedup_hamming` (default 6): the 8x8-block dHash over-collides on
 low-texture classes (healthy/g0 synthetics drop ~84% as "near-duplicates"), so
@@ -213,8 +216,8 @@ grade, are lesions anatomically plausible, does background look over-smooth?).
 ## `run_downstream_protocol.sh` — frozen-protocol runner for a 2nd backbone
 
 Re-runs the frozen downstream protocol (real-only + blendA-augmented, seeds
-111-115) for a different classifier backbone as a robustness check — see
-`docs/DOWNSTREAM_RESULTS.md`. Hyperparameters are locked to the frozen ones;
+111-115) for a different classifier backbone as a robustness check.
+Hyperparameters are locked to the frozen ones;
 only `--backbone` and the run-name prefix differ so the original densenet121
 rows are never overwritten or mixed:
 

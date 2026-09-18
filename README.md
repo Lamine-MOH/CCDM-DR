@@ -62,8 +62,8 @@ python downstream_eval/train_dr_classifier.py \
     --backbone resnet50 --epochs 30 --run_name real_plus_synthetic
 
 python downstream_eval/compare_runs.py --results_dir ./downstream_results
-# Protocol & results: docs/DOWNSTREAM_RESULTS.md (currently SUPERSEDED —
-# pending regeneration; keep classifier outputs local, downstream_results/ is gitignored)
+# Classifier outputs are local-only: downstream_results/ is gitignored and never committed.
+# Post-training orchestration + canonical evidence: see analysis/README.md.
 # (analysis/seed_report.py aggregates per-seed *_metrics.json into mean ± std)
 ```
 
@@ -75,18 +75,15 @@ The train/test split is **stratified by grade** at `--test_frac` (default 0.20,
 i.e. 80/20) with a `--min_test_per_grade` guard; a within-pool holdout (the
 merged APTOS splits), not the competition's official split.
 
-The historical 5-seed downstream experiment (protocol, mean±std table, blendA
-provenance, regeneration commands, second-backbone resnet50 check) is in
-`docs/DOWNSTREAM_RESULTS.md` — currently marked **SUPERSEDED — pending
-regeneration** (new 80/20 split + Tier-3 diffusion retrain + val-based classifier
-selection planned; see `docs_private/FIX_PLAN.md`). Classifier outputs should be
-kept local (`downstream_results/` is gitignored and never committed).
+Downstream classifier runs (real vs real+synthetic) are orchestrated end-to-end
+by `analysis/run_matrix.sh` (see `analysis/README.md`): generation → cond_scale
+sweep → per-grade CFG blends → multi-backbone classifier matrix, with best-epoch
+selection on a validation split and a single final test evaluation. Classifier
+outputs are kept local (`downstream_results/` is gitignored and never committed).
 
-See `AGENTS.md` for a denser command/gotcha reference, and the
-"eval-checkpoint gap" section below before you touch `--do_eval`. A
-start-to-finish walkthrough lives in `docs/full_pipeline.md`, and the private
-retrain-from-scratch memo in `docs_private/RETRAIN_GUIDE.md` (local companion
-docs, not needed for reproducing the published results).
+See the "eval-checkpoint gap" section below before you touch `--do_eval`, and
+`analysis/README.md` for the post-training diagnostics and downstream
+orchestration.
 
 ## What was changed vs. upstream
 
@@ -175,12 +172,10 @@ and the output h5 stores its generation attrs (`cond_scale`, `model_ckpt`,
 grades 0-4) plus `sample_grade_{g}.png` preview grids. `--sampler` can be
 `sde` (default, best quality), `ode`, or `dpmpp` (fastest).
 
-The historical frozen pipeline picked different CFG strengths per grade
-(grades 0/1/4 at cond_scale 4, grades 2/3 at 1.5, grade 4 real-only), assembled
-with `analysis/merge_h5_by_grade.py` into a blend h5 — see
-`docs/DOWNSTREAM_RESULTS.md` for the exact recipe and the (superseded) results.
-The regeneration is planned to also sweep alternative cond_scale maps and
-caps across multiple classifier backbones (`docs_private/FIX_PLAN.md`).
+Per-grade CFG blends (each grade sourced from a different cond_scale's generated
+pool, e.g. grades 0/1/4 at 4.0, grades 2/3 at 1.5, grade 4 real-only) are
+assembled with `analysis/merge_h5_by_grade.py` and orchestrated end-to-end by
+`analysis/run_matrix.sh` — see `analysis/README.md`.
 
 ## Directory map
 
@@ -220,20 +215,13 @@ CCDM-DR/
 │   └── README.md                                 # diagnostics usage + thresholds
 ├── notebooks/
 │   └── dataset_prepare.ipynb      # end-to-end data-prep walkthrough (Colab-friendly)
-├── docs/
-│   ├── DOWNSTREAM_RESULTS.md      # historical 5-seed experiment; SUPERSEDED (tracked)
-│   └── full_pipeline.md           # start-to-finish walkthrough
 ├── .env.h5_links                  # Google Drive file IDs (committed)
 ├── requirements.txt
-├── AGENTS.md                      # command/gotcha reference for coding agents
 └── LICENSE
 ```
 
-Note: `docs/` is tracked (`DOWNSTREAM_RESULTS.md` + `full_pipeline.md`). Private
-working notes (e.g. `docs_private/RETRAIN_GUIDE.md`, a retrain-from-scratch
-memo for the owner) live in `docs_private/`, which is gitignored. Classifier
-results written to `downstream_results/` are **local-only** (gitignored and
-never committed).
+Classifier results written to `downstream_results/` are **local-only**
+(gitignored and never committed).
 
 ## Citation
 

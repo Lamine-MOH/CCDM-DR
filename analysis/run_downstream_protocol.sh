@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the frozen downstream protocol (see docs/DOWNSTREAM_RESULTS.md) for a
+# Runs the frozen downstream protocol (real-only + blendA, seeds 111-115) for a
 # given classifier backbone: 5 real-only seeds + 5 blendA-augmented seeds.
 #
 # Hyperparameters are locked to the frozen protocol (epochs/batch/lr/img_size);
