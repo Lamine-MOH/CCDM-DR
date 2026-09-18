@@ -2,7 +2,6 @@
 # The noise and condition mapping layers are modified
 
 import os
-import contextlib
 import numpy as np
 import torch
 from torch import nn
@@ -35,12 +34,27 @@ def identity(t, *args, **kwargs):
 
 #----------------------------------------------------------------------------
 # Self-attention backend.
-"""
-> The original EDM AttentionOp materializes the full softmax(Q^T K) matrix in FP32 (a ~2 GiB spike per layer) and saves it for backprop (~1 GB/image/layer at 128px). 
-> Torch's scaled_dot_product_attention with the memory-efficient backend neither materializes the matrix nor stores it (recomputed on backward), so it is used
-by default when available. 
-> Set CCDM_ATTN_MATH=1 to force the exact original op for bit-for-bit reproducible runs; the architecture and weights are identical either way.
-"""
+#
+# The original EDM `AttentionOp` (below) materializes the full softmax(Q^T K)
+# matrix in FP32 (~2 GiB spike per layer) and saves it for backprop (~1
+# GB/image/layer at 128px), so batch>1 OOMs at 256px. torch's
+# scaled_dot_product_attention with the flash/memory-efficient backend neither
+# materializes the matrix nor stores it (recomputed on backward). The backend
+# used for a run is chosen at import time from the environment:
+#
+#    CCDM_ATTN_BACKEND=sdpa      (default) SDPA flash/mem-eff ONLY when truly
+#                                eligible (CUDA autocast fp16/bf16 + compute
+#                                >= 8.0 + torch >= 2.0); otherwise the chunked
+#                                op below is used. The full-matrix SDPA math
+#                                backend is never accepted.
+#    CCDM_ATTN_BACKEND=chunked   fp32 softmax computed in query-chunks with
+#                                recompute-on-backward; same math as the
+#                                original op, peak O(chunk*L*heads) instead of
+#                                O(L^2). Works on any dtype/torch/device.
+#    CCDM_ATTN_BACKEND=original  bit-exact legacy `AttentionOp` (may OOM at
+#                                256px; kept for bit-for-bit reproducibility).
+#
+# Legacy toggles: CCDM_ATTN_MATH=1 -> original, CCDM_ATTN_CHUNKED=1 -> chunked.
 
 def _torch_min_version(major, minor):
     try:
@@ -53,28 +67,32 @@ def _torch_min_version(major, minor):
         except Exception:
             return False
 
-def _use_sdpa_attention():
-    if not _torch_min_version(2, 0):
-        return False
-    forced_math = (os.environ.get('CCDM_ATTN_MATH', '0') or '').strip().lower()
-    if forced_math in ('1', 'true', 'yes', 'on'):
-        return False
-    return True
+_ATTN_BACKEND = (os.environ.get('CCDM_ATTN_BACKEND', 'sdpa') or '').strip().lower()
+if _ATTN_BACKEND not in ('sdpa', 'chunked', 'original'):
+    raise ValueError('CCDM_ATTN_BACKEND must be one of sdpa|chunked|original, got %s' % _ATTN_BACKEND)
 
-_USE_SDPA_ATTENTION = _use_sdpa_attention()
+def _env_flag_on(name):
+    return ((os.environ.get(name, '0') or '').strip().lower() in ('1', 'true', 'yes', 'on'))
 
-def _sdpa_kernel():
-    """Context manager selecting the memory-efficient backend on sm_80+ CUDA."""
+## legacy toggles
+if _env_flag_on('CCDM_ATTN_MATH'):
+    _ATTN_BACKEND = 'original'
+elif _env_flag_on('CCDM_ATTN_CHUNKED'):
+    _ATTN_BACKEND = 'chunked'
+
+# SDPA is only attempted when it is guaranteed memory-safe; any other mode,
+# dtype, or device takes the (always bounded) chunked path below.
+_USE_SDPA_ATTENTION = (_ATTN_BACKEND == 'sdpa') and _torch_min_version(2, 0)
+
+def _sdpa_context():
+    """sdpa_kernel restricted to flash/mem-eff (never math -> full softmax matrix)."""
+    from torch.nn.attention import SDPBackend, sdpa_kernel
     if not torch.cuda.is_available():
-        return contextlib.nullcontext()
-    try:
-        from torch.nn.attention import SDPBackend, sdpa_kernel
-    except Exception:
-        return contextlib.nullcontext()
+        raise NotImplementedError('SDPA requires CUDA')
     device_properties = torch.cuda.get_device_properties(torch.device('cuda'))
     if (device_properties.major, device_properties.minor) >= (8, 0):
-        return sdpa_kernel(backends=[SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH])
-    return sdpa_kernel(backends=[SDPBackend.MATH])
+        return sdpa_kernel(backends=[SDPBackend.EFFICIENT_ATTENTION, SDPBackend.FLASH_ATTENTION])
+    return sdpa_kernel(backends=[SDPBackend.EFFICIENT_ATTENTION])
 
 #----------------------------------------------------------------------------
 # classifier free guidance functions
@@ -224,6 +242,53 @@ class AttentionOp(torch.autograd.Function):
         return dq, dk
 
 #----------------------------------------------------------------------------
+# Query-chunked softmax attention with the same FP32 math as AttentionOp, but
+# with bounded peak memory: QK^T is never formed in full and the softmax
+# weights are recomputed per chunk in backward instead of being saved. q/k/v
+# use the (B, H, L, C) SDPA layout.
+
+class AttentionOpChunked(torch.autograd.Function):
+    q_chunk_size = 512
+
+    @staticmethod
+    def forward(ctx, q, k, v, q_chunk_size=512):
+        q_f, k_f, v_f = q.to(torch.float32), k.to(torch.float32), v.to(torch.float32)
+        inv = 1.0 / np.sqrt(q.shape[-1])
+        out = torch.empty_like(q)
+        L = q.shape[-2]
+        for start in range(0, L, q_chunk_size):
+            end = min(start + q_chunk_size, L)
+            w = (q_f[:, :, start:end] @ k_f.transpose(-2, -1)) * inv
+            w = w.softmax(dim=-1)
+            out[:, :, start:end] = (w.to(q.dtype) @ v_f).to(q.dtype)
+        ctx.save_for_backward(q, k, v)
+        ctx.q_chunk_size = q_chunk_size
+        return out
+
+    @staticmethod
+    def backward(ctx, dout):
+        q, k, v = ctx.saved_tensors
+        q_f, k_f, v_f = q.to(torch.float32), k.to(torch.float32), v.to(torch.float32)
+        dout_f = dout.to(torch.float32)
+        inv = 1.0 / np.sqrt(q.shape[-1])
+        dq = torch.zeros_like(q)
+        dk = torch.zeros_like(k)
+        dv = torch.zeros_like(v)
+        L = q.shape[-2]
+        for start in range(0, L, ctx.q_chunk_size):
+            end = min(start + ctx.q_chunk_size, L)
+            qc = q_f[:, :, start:end]
+            w = (qc @ k_f.transpose(-2, -1)) * inv
+            w = w.softmax(dim=-1)
+            dos = dout_f[:, :, start:end]
+            dw = dos @ v_f.transpose(-2, -1)
+            dlogits = w * (dw - (dw * w).sum(dim=-1, keepdim=True))
+            dq[:, :, start:end] = (dlogits @ k_f * inv).to(q.dtype)
+            dk += (dlogits.transpose(-2, -1) @ qc * inv).to(k.dtype)
+            dv += (w.transpose(-2, -1) @ dos).to(v.dtype)
+        return dq, dk, dv, None
+
+#----------------------------------------------------------------------------
 # Unified U-Net block with optional up/downsampling and self-attention.
 # Represents the union of all features employed by the DDPM++, NCSN++, and
 # ADM architectures.
@@ -282,20 +347,34 @@ class UNetBlock(torch.nn.Module):
         x = x * self.skip_scale
 
         if self.num_heads:
-            if _USE_SDPA_ATTENTION:
-                head_dim = x.shape[1] // self.num_heads
-                q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0], self.num_heads, head_dim, 3, -1).permute(3, 0, 1, 4, 2).unbind(0)
-                q = q * (head_dim ** -0.5)
-                with _sdpa_kernel():
-                    a = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0)
-                a = a.permute(0, 1, 3, 2).reshape(*x.shape)
-            else:
+            if _ATTN_BACKEND == 'original':
                 q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0] * self.num_heads, x.shape[1] // self.num_heads, 3, -1).unbind(2)
                 w = AttentionOp.apply(q, k)
                 a = torch.einsum('nqk,nck->ncq', w, v).reshape(*x.shape)
+            else:
+                a = self._attention(x)
             x = self.proj(a).add_(x)
             x = x * self.skip_scale
         return x
+
+    def _attention(self, x):
+        """Memory-bounded self-attention: SDPA flash/mem-eff when eligible,
+        else the query-chunked fp32 op. Never uses the SDPA math backend --
+        its full softmax matrix is what OOMs batch>1 at 256px."""
+        head_dim = x.shape[1] // self.num_heads
+        q, k, v = self.qkv(self.norm2(x)).reshape(x.shape[0], self.num_heads, head_dim, 3, -1).permute(3, 0, 1, 4, 2).unbind(0)
+        if _USE_SDPA_ATTENTION and torch.is_autocast_enabled('cuda'):
+            try:
+                dtype = torch.get_autocast_gpu_dtype()
+                qi = (q.to(dtype) * (head_dim ** -0.5)).contiguous()
+                ki = k.to(dtype).contiguous()
+                vi = v.to(dtype).contiguous()
+                with _sdpa_context():
+                    a = F.scaled_dot_product_attention(qi, ki, vi, dropout_p=0.0)
+                return a.permute(0, 1, 3, 2).reshape(*x.shape)
+            except (NotImplementedError, RuntimeError):
+                pass
+        return AttentionOpChunked.apply(q, k, v, AttentionOpChunked.q_chunk_size).permute(0, 1, 3, 2).reshape(*x.shape)
 
 #----------------------------------------------------------------------------
 # Timestep embedding used in the DDPM++ and ADM architectures.
