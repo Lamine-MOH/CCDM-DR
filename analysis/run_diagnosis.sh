@@ -21,6 +21,7 @@
 #     --classifier            also run the synthetic-only classifier (A2, slow;
 #                             needs GPU + 50 epochs)
 #     --num_steps N           total steps for log filename (default 150000)
+#     --n_rows N / --n_cols N grid dims for A1 (default 0 = auto-detect from PNG)
 # ==============================================================================
 set -euo pipefail
 
@@ -33,6 +34,8 @@ IMG_SIZE=128
 SYNTH_H5=""
 RUN_CLF=0
 NUM_STEPS=150000
+N_ROWS=0
+N_COLS=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -41,6 +44,8 @@ while [[ $# -gt 0 ]]; do
         --synth_h5)  SYNTH_H5="$2"; shift 2 ;;
         --classifier) RUN_CLF=1; shift ;;
         --num_steps) NUM_STEPS="$2"; shift 2 ;;
+        --n_rows)    N_ROWS="$2"; shift 2 ;;
+        --n_cols)    N_COLS="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -65,7 +70,8 @@ python analysis/trace_conditioning.py \
     --grid_dir "$GRID_DIR" \
     --out_dir "$DIAG_OUT/trace" \
     --real_h5 "$TRAIN_H5" \
-    --max_label 4 --cell "$IMG_SIZE" --pad 1
+    --max_label 4 --cell "$IMG_SIZE" --pad 1 \
+    --n_rows "$N_ROWS" --n_cols "$N_COLS"
 
 echo
 echo "===== A1 VERDICT (see $DIAG_OUT/trace/trace_report.md) ====="

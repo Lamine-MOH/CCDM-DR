@@ -184,9 +184,11 @@ python analysis/seed_report.py --results_dir ./downstream_results \
 
 ## A1 — `trace_conditioning.py` (teaching-signal tracer)
 
-Splits every `results/sample_{ode,sde}_<step>.png` grid into its 10×10 cells
-(cell = trained image size, stride = cell+1 to undo `save_image(padding=1)`),
-keeps the 7-feature schema of the original trace
+Splits every `results/sample_{ode,sde}_<step>.png` grid into its cells
+(the grid is 10×10 at image_size≤128, 6×6 above — dims are auto-detected
+from the PNG unless `--n_rows/--n_cols` are given; cell = trained image
+size, stride = cell+1 to undo `save_image(padding=1)`), keeps the 7-feature
+schema of the original trace
 (`brightness, R, G, B, std, RminusG, edge_mag`), assigns each row raw grade
 `r*max_label/(n_rows-1)` (i.e. 0.0, 0.444, …, 4.0 → rounded integer for the
 5-class metric), and reports stratified RF-CV accuracy per checkpoint.

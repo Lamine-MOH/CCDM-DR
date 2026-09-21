@@ -47,6 +47,14 @@ from sklearn.model_selection import StratifiedKFold
 
 
 # --------------------------------------------------------------------------- #
+def _grid_dims(png_path, cell, pad):
+    """Infer (n_rows, n_cols) from the pixel size of a save_image() grid."""
+    with Image.open(png_path) as im:
+        W, H = im.size
+    stride = cell + pad
+    return max(int(round((H - pad) / stride)), 1), max(int(round((W - pad) / stride)), 1)
+
+
 def extract_features_from_grid(png_path, cell=128, pad=1, n_rows=10, n_cols=10):
     """Split a save_image() grid PNG into cells and return per-cell features."""
     img = np.asarray(Image.open(png_path).convert("RGB"), dtype=np.float32)  # H,W,3
@@ -114,8 +122,8 @@ def main():
     ap.add_argument("--out_dir", required=True)
     ap.add_argument("--real_h5", default=None, help="optional real train h5 for the same-script reference")
     ap.add_argument("--max_label", type=float, default=4.0)
-    ap.add_argument("--n_rows", type=int, default=10)
-    ap.add_argument("--n_cols", type=int, default=10)
+    ap.add_argument("--n_rows", type=int, default=0, help="grid rows (0 = auto-detect from first PNG)")
+    ap.add_argument("--n_cols", type=int, default=0, help="grid cols (0 = auto-detect from first PNG)")
     ap.add_argument("--cell", type=int, default=128, help="cell size in px (must match trained image_size)")
     ap.add_argument("--pad", type=int, default=1, help="save_image padding used during training")
     ap.add_argument("--cap_per_grade", type=int, default=100, help="real-reference balance cap")
@@ -129,7 +137,14 @@ def main():
     if not png_files:
         sys.exit(f"no sample_{'{ode,sde}'}_<step>.png grids found in {args.grid_dir}")
 
-    row_labels_arr = row_labels(args.n_rows, args.max_label)
+    n_rows = int(args.n_rows) or 0
+    n_cols = int(args.n_cols) or 0
+    if not n_rows or not n_cols:
+        probe = os.path.join(args.grid_dir, png_files[0])
+        n_rows, n_cols = _grid_dims(probe, args.cell, args.pad)
+        print(f"  auto-detected grid: {n_rows}x{n_cols} cells from {os.path.basename(probe)}")
+
+    row_labels_arr = row_labels(n_rows, args.max_label)
     grade_of_row = np.round(row_labels_arr).astype(int)
     chance = 1.0 / len(np.unique(grade_of_row))
 
@@ -139,18 +154,18 @@ def main():
         m = re.match(r"^sample_(ode|sde)_(\d+)\.png$", fname)
         sampler, step = m.group(1), int(m.group(2))
         feats = extract_features_from_grid(
-            os.path.join(args.grid_dir, fname), cell=args.cell, pad=args.pad, n_rows=args.n_rows, n_cols=args.n_cols
+            os.path.join(args.grid_dir, fname), cell=args.cell, pad=args.pad, n_rows=n_rows, n_cols=n_cols
         )
-        labels = np.repeat(grade_of_row, args.n_cols)
+        labels = np.repeat(grade_of_row, n_cols)
         acc, acc_std = rf_separability(feats, labels, random_state=args.seed)
 
         df_img = pd.DataFrame(feats, columns=["brightness", "R", "G", "B", "std", "RminusG", "edge_mag"])
-        df_img["label"] = np.repeat(row_labels_arr, args.n_cols)
+        df_img["label"] = np.repeat(row_labels_arr, n_cols)
         df_img["step"] = step
         df_img["sampler"] = sampler
         df_img.to_csv(os.path.join(args.out_dir, "per_image_features", f"{sampler}_{step}.csv"), index=False)
 
-        df_row = df_img.groupby(np.repeat(np.arange(args.n_rows), args.n_cols)).mean(numeric_only=True)
+        df_row = df_img.groupby(np.repeat(np.arange(n_rows), n_cols)).mean(numeric_only=True)
         df_row["label"] = row_labels_arr
         df_row["step"] = step
         df_row["sampler"] = sampler
@@ -208,7 +223,7 @@ def main():
     lines = [
         "## Conditioning trace report",
         "",
-        f"grids: {args.grid_dir} ({len(png_files)} grids, 10x10)",
+        f"grids: {args.grid_dir} ({len(png_files)} grids, {n_rows}x{n_cols})",
         f"chance: {chance:.2f}",
         "| step | sampler | rf_cv_acc |",
         "|------|---------|-----------|",
