@@ -60,6 +60,10 @@ def main():
     p.add_argument("--backbone", default="densenet121")
     p.add_argument("--seeds", default="111 112 113 114 115")
     p.add_argument("--pools", required=True, help="whitespace-separated '1.5=path 2.5=path 4.0=path'")
+    p.add_argument("--arm_prefix", default="uni",
+                   help="run-name prefix of the sweep arms; the run looked up is "
+                        "'{backbone}_{arm_prefix}_cs{cs}_s{seed}'. Use e.g. "
+                        "'uni_sde' for a per-sampler sweep (Exp 5 factorial).")
     p.add_argument("--out", default="output/blends/blend_sel.h5")
     p.add_argument("--cap", type=int, default=1000)
     p.add_argument("--caps_override", default=None)
@@ -79,7 +83,7 @@ def main():
         for g in range(5):
             vals = []
             for s in seeds:
-                run = "{}_{}_s{}".format(args.backbone, "uni_cs{}".format(cs), s)
+                run = "{}_{}_s{}".format(args.backbone, "{}_cs{}".format(args.arm_prefix, cs), s)
                 vals.append(val_recall(load_metric(args.results_dir, run))[g])
             rec[cs].append(statistics.mean(vals))
 
