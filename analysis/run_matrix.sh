@@ -23,6 +23,22 @@
 #                seed (promote via --promote for the full seed set)
 #   5. report    compare_runs.py + per-backbone seed_report.py
 #
+# --factorial mode (Exp 5: clean sampler x cond_scale grid, no blends):
+#   1. gen       {--sampler sde|ode} x --cses, all grades 0-4
+#   2. eval      every (sampler, cs) pool as a uniform augmentation arm
+#                (real + pool capped at --cap, all 5 grades synthetic) over EVERY
+#                backbone in --headline-backbones x --seeds, plus real_only per
+#                backbone. Arm name: uni_{sampler}_cs{cs} (e.g. uni_sde_cs1.0).
+#                Order: real_only, then sde cs1..4, then ode cs1..4, per backbone.
+#   3. report    analysis/sampler_cs_report.py (2x4 grid + main effects) +
+#                compare_runs.py. Blends (stage 3) are skipped.
+#   Intended sequential use, one backbone per invocation so densenet121's full
+#   grid lands first (every stage is resumable — existing outputs are skipped):
+#     bash analysis/run_matrix.sh ROOT DATA --model_ckpt CKPT --factorial \
+#         --sampler sde --sampler ode --cses "1.0 2.0 3.0 4.0" \
+#         --results_subdir Exp5_sampler_cs --headline-backbones densenet121
+#     ... then resnet50, then efficientnet_b4
+#
 # Optional flags:
 #   --model_config PATH          (default <REPO>/config/model_cfg/unet_edm_128_v1.yaml)
 #   --img_size N                 (default 128)
@@ -41,6 +57,15 @@
 #   --gen                        only generation + blends (no classifier)
 #   --no-gen / --no-blend / --no-eval
 #   --gpu N                      (default 0)
+#   --factorial                  Exp 5 sampler x cond_scale grid (see above)
+#   --sampler S                  repeatable; default "sde". In --factorial mode
+#                                every listed sampler is generated + evaluated.
+#   --cses "c1 c2 ..."           (default "1.5 2.5 4.0")
+#   --cap N                      per-grade synthetic cap (default 1000)
+#   --results_subdir NAME        nest the results under downstream_results/NAME
+#   --gen-seed N                 RNG seed for generation (default 111)
+#   --reseed-per-grade           seed once per grade (seed + grade) so two
+#                                samplers share init noise per grade
 #   --dry-run                    print the commands without running them
 
 set -euo pipefail
@@ -74,6 +99,13 @@ DO_GEN=1
 DO_BLEND=1
 DO_EVAL=1
 DRY_RUN=0
+FACTORIAL=0
+SAMPLERS=""
+CSES="1.5 2.5 4.0"
+CAP=1000
+RESULTS_SUBDIR=""
+GEN_SEED=111
+RESEED_PER_GRADE=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -98,10 +130,18 @@ while [[ $# -gt 0 ]]; do
         --no-gen)              DO_GEN=0; shift ;;
         --no-blend)            DO_BLEND=0; shift ;;
         --no-eval)             DO_EVAL=0; shift ;;
+        --factorial)           FACTORIAL=1; shift ;;
+        --sampler)             SAMPLERS="${SAMPLERS:+$SAMPLERS }$2"; shift 2 ;;
+        --cses)                CSES="$2"; shift 2 ;;
+        --cap)                 CAP="$2"; shift 2 ;;
+        --results_subdir)      RESULTS_SUBDIR="$2"; shift 2 ;;
+        --gen-seed)            GEN_SEED="$2"; shift 2 ;;
+        --reseed-per-grade)    RESEED_PER_GRADE=1; shift ;;
         --dry-run)             DRY_RUN=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+
 
 if [ -z "$MODEL_CKPT" ]; then
     echo "ERROR: --model_ckpt is required (direct path to model-<step>.pt)." >&2
@@ -115,6 +155,10 @@ TEST_H5="${TEST_H5:-${DATA_PATH}/DRGrading_${IMG_SIZE}x${IMG_SIZE}_test.h5}"
 GEN_DIR="${ROOT_PATH}/output"
 BLEND_DIR="${ROOT_PATH}/output/blends"
 RESULTS_DIR="${ROOT_PATH}/downstream_results"
+[ -n "$RESULTS_SUBDIR" ] && RESULTS_DIR="${RESULTS_DIR}/${RESULTS_SUBDIR}"
+# legacy (non-factorial) mode is the sde pipeline; --factorial without an
+# explicit --sampler would otherwise have no pools to build.
+[ -z "$(echo "$SAMPLERS" | tr -d ' ')" ] && SAMPLERS="sde"
 
 run() {
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -135,17 +179,35 @@ pmessage() {
 check_file() {
     local f="$1" what="$2"
     if [ ! -f "$f" ]; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+            echo "  [dry-run] WARNING: $what not found: $f" >&2
+            return 0
+        fi
         echo "ERROR: $what not found: $f" >&2
         exit 1
     fi
 }
 
 # ---------------------------------------------------------------------------
-# Stage 1 — generation passes (F1/F2/F3: all grades 0-4 @ cs 4.0/2.5/1.5)
+# Stage 1 — generation passes
+#   legacy (default): F1 (cs4.0), F2 (cs2.5), F3 (cs1.5), all grades, sampler sde,
+#                     written to output/generated_cs<cs>/ (unchanged paths)
+#   --factorial:      {--sampler} x --cses -> output/generated_<sampler>_cs<cs>/
 # ---------------------------------------------------------------------------
+# Output dir for a (sampler, cond_scale) pool. The legacy sde layout is kept
+# verbatim so the pre-existing pools are reused, never regenerated.
+gen_dirname() {
+    local sampler="$1" cs="$2"
+    if [ "$FACTORIAL" -eq 0 ] && [ "$sampler" = "sde" ]; then
+        echo "generated_cs${cs}"
+    else
+        echo "generated_${sampler}_cs${cs}"
+    fi
+}
+
 gen_pass() {
-    local cs="$1"
-    local out="${GEN_DIR}/generated_cs${cs}"
+    local sampler="$1" cs="$2"
+    local out="${GEN_DIR}/$(gen_dirname "$sampler" "$cs")"
     local h5="${out}/generated.h5"
     if [ -f "$h5" ]; then
         echo "  [skip] $h5 exists"
@@ -154,6 +216,8 @@ gen_pass() {
     check_file "$MODEL_CKPT" "diffusion checkpoint (--model_ckpt)"
     check_file "$MODEL_CONFIG" "model yaml (--model_config)"
     mkdir -p "$out"
+    local seed_flag=()
+    [ "$RESEED_PER_GRADE" -eq 1 ] && seed_flag=(--reseed_per_grade)
     run python generate_from_ckpt.py \
         --model_ckpt "$MODEL_CKPT" \
         --model_config "$MODEL_CONFIG" \
@@ -161,19 +225,32 @@ gen_pass() {
         --image_size "$IMG_SIZE" \
         --cond_scale "$cs" \
         --rescaled_phi 0.7 \
-        --sampler sde --num_sample_steps 32 \
+        --sampler "$sampler" --num_sample_steps 32 \
         --grades 0 1 2 3 4 \
         --nfake_per_grade "$NFAKE" \
         --batch_size "$GEN_BATCH" \
+        --seed "$GEN_SEED" ${seed_flag[@]+"${seed_flag[@]}"} \
         --use_y2cov --y2cov_hy_weight_train 0.05 --y2cov_hy_weight_test 0.05 \
         --out_dir "$out"
 }
 
 if [ "$DO_GEN" -eq 1 ]; then
-    pmessage "Stage 1/5 — generation: F1 (cs4.0), F2 (cs2.5), F3 (cs1.5), all grades"
-    gen_pass "4.0"
-    gen_pass "2.5"
-    gen_pass "1.5"
+    if [ "$FACTORIAL" -eq 1 ]; then
+        pmessage "Stage 1/3 — generation: samplers {${SAMPLERS}} x cond_scales {${CSES}}, all grades"
+    else
+        pmessage "Stage 1/5 — generation: F1 (cs4.0), F2 (cs2.5), F3 (cs1.5), all grades"
+    fi
+    if [ "$FACTORIAL" -eq 1 ]; then
+        for s in $SAMPLERS; do
+            for cs in $CSES; do
+                gen_pass "$s" "$cs"
+            done
+        done
+    else
+        gen_pass "sde" "4.0"
+        gen_pass "sde" "2.5"
+        gen_pass "sde" "1.5"
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -211,14 +288,49 @@ sweep_cs() {
     done
 }
 
+# --- factorial mode: real_only + every (sampler, cond_scale) pool, per backbone
+factorial_arm_spec() {
+    # uni_<sampler>_cs<cond_scale> -> "<h5>:<cap>"
+    local arm="$1" sampler cs
+    sampler="${arm#uni_}"
+    cs="${sampler##*_cs}"
+    sampler="${sampler%_cs*}"
+    echo "${GEN_DIR}/$(gen_dirname "$sampler" "$cs")/generated.h5:${CAP}"
+}
+
+factorial_eval() {
+    local backbone="$1"
+    for s in $SEEDS; do
+        classifier "$backbone" "real_only" "$s" "$CAP" ""
+    done
+    for sampler in $SAMPLERS; do
+        for cs in $CSES; do
+            local arm="uni_${sampler}_cs${cs}"
+            check_file "${GEN_DIR}/$(gen_dirname "$sampler" "$cs")/generated.h5" \
+                "factorial pool (generate first)"
+            for s in $SEEDS; do
+                local spec="$(factorial_arm_spec "$arm")"
+                classifier "$backbone" "$arm" "$s" "${spec#*:}" "${spec%%:*}"
+            done
+        done
+    done
+}
+
 if [ "$DO_EVAL" -eq 1 ]; then
     export CUDA_VISIBLE_DEVICES="$GPU"
     mkdir -p "$RESULTS_DIR"
-    pmessage "Stage 2/5 — cs sweep: uni_cs1.5/2.5/4.0 x {${SENS_BACKBONE}} x {$SEEDS}"
-    for cs in 1.5 2.5 4.0; do
-        check_file "${GEN_DIR}/generated_cs${cs}/generated.h5" "sweep source (generate first or copy from TM)"
-        sweep_cs "$cs"
-    done
+    if [ "$FACTORIAL" -eq 1 ]; then
+        pmessage "Stage 2/3 — factorial: real_only + {${SAMPLERS}} x {${CSES}} (cap ${CAP}/grade) x {${HEADLINE_BACKBONES}} x {$SEEDS}"
+        for backbone in $HEADLINE_BACKBONES; do
+            factorial_eval "$backbone"
+        done
+    else
+        pmessage "Stage 2/5 — cs sweep: uni_cs1.5/2.5/4.0 x {${SENS_BACKBONE}} x {$SEEDS}"
+        for cs in 1.5 2.5 4.0; do
+            check_file "${GEN_DIR}/generated_cs${cs}/generated.h5" "sweep source (generate first or copy from TM)"
+            sweep_cs "$cs"
+        done
+    fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -241,7 +353,9 @@ blend() {
         $ov
 }
 
-if [ "$DO_BLEND" -eq 1 ]; then
+if [ "$FACTORIAL" -eq 1 ]; then
+    echo "  [skip] Stage 3 blends — not part of the sampler x cond_scale factorial."
+elif [ "$DO_BLEND" -eq 1 ]; then
     pmessage "Stage 3/5 — blends: frozen recipe + data-driven blend_sel"
     mkdir -p "$BLEND_DIR"
     if [ "$DO_GEN" -eq 1 ]; then
@@ -299,7 +413,7 @@ is_promoted() {
     return 1
 }
 
-if [ "$DO_EVAL" -eq 1 ]; then
+if [ "$DO_EVAL" -eq 1 ] && [ "$FACTORIAL" -eq 0 ]; then
     pmessage "Stage 4/5 — headline arms x {${HEADLINE_BACKBONES}}"
     for backbone in $HEADLINE_BACKBONES; do
         for arm in real_only blendA blendA_g3cs4 blend_sel; do
@@ -372,7 +486,30 @@ if [ "$DO_EVAL" -eq 1 ]; then
     done
 fi
 
+# ---------------------------------------------------------------------------
+# Factorial reporting — the 2x4 sampler x cond_scale grid + main effects
+# ---------------------------------------------------------------------------
+if [ "$FACTORIAL" -eq 1 ] && [ "$DO_EVAL" -eq 1 ]; then
+    pmessage "Stage 3/3 — reporting: sampler x cond_scale grid"
+    run python analysis/sampler_cs_report.py \
+        --results_dir "$RESULTS_DIR" \
+        --backbones "$HEADLINE_BACKBONES" \
+        --seeds "$SEEDS" \
+        --samplers $SAMPLERS \
+        --cses $CSES \
+        --out_csv "${RESULTS_DIR}/sampler_cs_grid.csv"
+    run python downstream_eval/compare_runs.py --results_dir "$RESULTS_DIR"
+fi
+
 pmessage "Done. Artifacts under:"
-echo "  generated : $GEN_DIR/generated_cs{4.0,2.5,1.5}/generated.h5"
-echo "  blends    : $BLEND_DIR/{blendA,blendA_g3cs4,blendA_plus_g4,blendA_cap1500,blend_sel}.h5"
+if [ "$FACTORIAL" -eq 1 ]; then
+    for s in $SAMPLERS; do
+        for cs in $CSES; do
+            echo "  generated : $GEN_DIR/$(gen_dirname "$s" "$cs")/generated.h5"
+        done
+    done
+else
+    echo "  generated : $GEN_DIR/generated_cs{4.0,2.5,1.5}/generated.h5"
+    echo "  blends    : $BLEND_DIR/{blendA,blendA_g3cs4,blendA_plus_g4,blendA_cap1500,blend_sel}.h5"
+fi
 echo "  results   : $RESULTS_DIR/  (run compare_runs.py to refresh the table)"
