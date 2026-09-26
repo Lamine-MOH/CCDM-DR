@@ -115,6 +115,14 @@ def parse_args():
                    help="output dir (default: output/generated_cs{cond_scale})")
     p.add_argument("--out_name", type=str, default="generated.h5")
 
+    # reproducibility. Default seed 111 reproduces every pre-existing generated
+    # set; --reseed_per_grade is opt-in (it changes the noise draws).
+    p.add_argument("--seed", type=int, default=111)
+    p.add_argument("--reseed_per_grade", action="store_true",
+                   help="seed once per grade (seed + grade) so two samplers start "
+                        "every grade from the same init noise. Off by default: without "
+                        "it the RNG carries across grades, as it always has.")
+
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
 
     args = p.parse_args()
@@ -385,9 +393,13 @@ def sample_for_grade(gen_model, fn_y2h, grade, nfake, args):
 
 def main():
     args = parse_args()
-    torch.manual_seed(111)
-    np.random.seed(111)
     os.makedirs(args.out_dir, exist_ok=True)
+
+    def seed_everything(seed):
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+    seed_everything(args.seed)
 
     fn_y2h, fn_y2cov = make_embed_fns(args, args.device)
     sigma_type, sigma_default_val, y_unique, sigma_unique = load_sigma_data(args)
@@ -400,6 +412,8 @@ def main():
 
     images_all, labels_all = [], []
     for grade in args.grades:
+        if args.reseed_per_grade:
+            seed_everything(args.seed + grade)
         print("\n Generating {} images for grade {} (sampler={}, steps={})...".format(
             args.nfake_per_grade, grade, args.sampler, args.num_sample_steps))
         imgs = sample_for_grade(gen_model, fn_y2h, grade, args.nfake_per_grade, args)
@@ -421,6 +435,8 @@ def main():
         f.attrs["max_label"] = args.max_label
         f.attrs["sampler"] = args.sampler
         f.attrs["num_sample_steps"] = args.num_sample_steps
+        f.attrs["seed"] = args.seed
+        f.attrs["reseed_per_grade"] = bool(args.reseed_per_grade)
         f.attrs["edm_sigma_data_type"] = sigma_type
         f.create_dataset("images", data=images, dtype="uint8", compression="gzip", compression_opts=6)
         f.create_dataset("labels", data=labels, dtype="float64")
