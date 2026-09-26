@@ -28,6 +28,75 @@ The post-retrain evidence is produced end-to-end by these two (results land in
   `blend_sel.h5`. Do not treat its output as canonical: per-grade val recall
   anti-transfers to test (g3/g4 Pearson < 0), so the frozen `blendA` recipe is
   the headline arm and per-grade selection is a documented limitation.
+  `--arm_prefix` (default `uni`) sets the sweep arm-name prefix the runs are
+  read from — use `uni_sde` / `uni_ode` for a per-sampler sweep (factorial mode).
+
+### Factorial mode: `--factorial` (Exp 5, sampler × cond_scale)
+
+A clean factorial that shares **nothing** with Exp 3/4 except the checkpoint:
+every pool is regenerated and every classifier run is re-trained. Replaces the
+sweep + blend stages with one uniform augmentation arm per (sampler, cond_scale)
+cell — real train + that pool capped at `--cap` per grade, **all five grades
+synthetic** (a constant handicap across cells, so the contrasts stay valid).
+
+| flag | meaning |
+|---|---|
+| `--factorial` | enable the mode (blends are skipped; reporting switches to `sampler_cs_report.py`) |
+| `--sampler S` | repeatable; e.g. `--sampler sde --sampler ode` |
+| `--cses "1.0 2.0 3.0 4.0"` | cond_scale grid. **`1.0` is meaningful**: `unet_edm.forward_with_cond_scale` returns early at `cond_scale == 1`, i.e. guidance *off* — one UNet eval per Heun step instead of two, so that pool generates ~2× faster |
+| `--cap N` | per-grade synthetic cap (default 1000) |
+| `--results_subdir NAME` | nest results under `downstream_results/NAME` (keeps Exp 3/4 files untouched) |
+| `--gen-seed N` / `--reseed-per-grade` | generation RNG. `--reseed-per-grade` seeds once per grade (`seed + grade`) so two samplers start each grade from the same init noise; **off by default** — without it the RNG carries across grades, as it always has, and every pre-existing pool stays byte-reproducible |
+
+Arm names are `uni_{sampler}_cs{cond_scale}` (e.g. `densenet121_uni_sde_cs1.0_s111`),
+plus `{backbone}_real_only_s{seed}`. Pools land in `output/generated_{sampler}_cs{cs}/`
+— in factorial mode the legacy `output/generated_cs{cs}/` layout is *not* reused,
+so the old pools are never regenerated or overwritten.
+
+Intended sequential use, one backbone per invocation so densenet121's full 2×K
+grid lands first (every stage skips what already exists, so all three are
+resumable and re-running is cheap):
+
+```bash
+COMMON="--model_ckpt <ROOT>/output/DRGrading_128/setup1_dr/results/model-100000.pt \
+        --factorial --sampler sde --sampler ode --cses 1.0 2.0 3.0 4.0 \
+        --results_subdir Exp5_sampler_cs"
+bash analysis/run_matrix.sh <ROOT> <DATA> $COMMON --headline-backbones densenet121
+bash analysis/run_matrix.sh <ROOT> <DATA> $COMMON --headline-backbones resnet50
+bash analysis/run_matrix.sh <ROOT> <DATA> $COMMON --headline-backbones efficientnet_b4
+```
+
+That is 8 generation passes + 135 classifier runs (3 backbones × [5 `real_only` +
+8 arms × 5 seeds]). Use `--dry-run` to inspect the exact command list first.
+
+### `sampler_cs_report.py` — the 2×K grid reporter
+
+```bash
+python analysis/sampler_cs_report.py \
+    --results_dir downstream_results/Exp5_sampler_cs \
+    --backbones "densenet121 resnet50 efficientnet_b4" \
+    --seeds "111 112 113 114 115" --samplers "sde ode" --cses "1.0 2.0 3.0 4.0" \
+    --out_csv downstream_results/Exp5_sampler_cs/sampler_cs_grid.csv
+```
+
+Per backbone it prints, for `--sides "test val"` (default both):
+
+1. the **cell grid** (sampler × cond_scale) of mean±std over seeds for
+   qwk / accuracy / macro-F1 / per-grade recall, with `real_only` alongside the
+   recall grids;
+2. the **paired delta vs `real_only`**, index-aligned by seed, with +n/−n counts;
+3. the **head-to-head sampler contrast** at matched cond_scale (`sde - ode`,
+   paired by seed) — the direct A/B;
+4. **main effects**: each sampler averaged over cond_scales, and each cond_scale
+   averaged over samplers.
+
+It refuses to silently average over a broken design: missing/partial cells are
+listed with their absent seeds, and it warns if `selection_on`, `val_seed`,
+`val_frac` or `pretrained` differ anywhere in the grid. The val side reports only
+what the metrics JSON actually stores (`val_qwk` + `val_per_class_report`);
+val accuracy/macro-F1 print `--` rather than falling back to the test value, so
+read decisions off the val rows. `--out_csv` writes every number long-format
+(`kind` = `cell` / `delta_vs_real_only` / `sampler_contrast` / `main_effect_*`).
 
 ### Merge helper `merge_h5_by_grade.py` — per-grade blend of per-scale h5 files
 
