@@ -47,6 +47,10 @@ class Trainer:
         ema_update_every = 10,
         ema_decay = 0.999,
         adam_betas = (0.9, 0.999),
+        lr_schedule = 'constant',
+        lr_warmup_steps = 0,
+        lr_min_lr_frac = 0.0,
+        loss_ema_decay = 0.999,
         save_every = 1000,
         sample_every = 1000,
         y_visual = None,
@@ -116,6 +120,19 @@ class Trainer:
         # optimizer
         self.opt = Adam(diffusion_model.parameters(), lr = train_lr, betas = adam_betas)
 
+        # learning-rate schedule (deterministic function of the global step; see fn_lr_at_step)
+        self.base_lr = train_lr
+        self.lr_schedule = lr_schedule
+        self.lr_warmup_steps = max(0, int(lr_warmup_steps))
+        assert 0.0 <= lr_min_lr_frac <= 1.0, 'lr_min_lr_frac must be a fraction of train_lr in [0, 1]'
+        self.lr_min_lr = train_lr * lr_min_lr_frac
+        if self.lr_min_lr > self.base_lr:
+            raise ValueError('lr_min_lr_frac implies a floor ({}) above the base LR ({})'.format(self.lr_min_lr, self.base_lr))
+
+        # EMA of the loss, for logging only (see fn_update_loss_ema)
+        self.loss_ema_decay = loss_ema_decay
+        self.loss_ema = None
+
         # init. EMA
         if self.accelerator.is_main_process:
             self.ema = EMA(diffusion_model, update_after_step=ema_update_after_step, beta = ema_decay, update_every = ema_update_every, coerce_dtype=True) #coerce_dtype make sure EMA is compatible with multi-GPU
@@ -132,11 +149,61 @@ class Trainer:
         # prepare model, dataloader, optimizer with accelerator
         self.model, self.opt = self.accelerator.prepare(self.model, self.opt)
 
+        # make the step-0 LR explicit, so the schedule is in force from the very first update
+        self.fn_set_lr(self.step)
+
     ########################################################################################    
     @property
     def device(self):
         return self.accelerator.device
-    
+
+    ########################################################################################    
+    ## learning rate
+    def fn_lr_at_step(self, step):
+        """
+        Deterministic LR as a function of the GLOBAL step. No internal state and no RNG,
+        so a run resumed via --resume_step lands on exactly the same LR it would have
+        reached had it never been interrupted (self.step is restored from the checkpoint).
+        No reactive/plateau control on purpose: the EDM loss estimator is heavy-tailed
+        (sigma ~ lognormal, loss weight ~ 1/sigma at small sigma), so a loss-triggered
+        controller would fire on sampling noise and decay the LR irreversibly.
+        """
+        if self.lr_schedule == 'constant':
+            return self.base_lr
+
+        if step < self.lr_warmup_steps:
+            return self.base_lr * (step + 1) / self.lr_warmup_steps
+
+        span = max(1, self.train_num_steps - self.lr_warmup_steps)
+        p = (step - self.lr_warmup_steps) / span # 0 at the end of warmup, 1 at train_num_steps
+        p = min(max(p, 0.0), 1.0)
+
+        if self.lr_schedule == 'cosine':
+            return self.lr_min_lr + 0.5 * (self.base_lr - self.lr_min_lr) * (1.0 + math.cos(math.pi * p))
+        if self.lr_schedule == 'linear':
+            return self.base_lr + (self.lr_min_lr - self.base_lr) * p
+        if self.lr_schedule == 'exp':
+            return self.lr_min_lr + (self.base_lr - self.lr_min_lr) * math.exp(-5.0 * p)
+
+        raise ValueError('Not supported lr schedule: {}'.format(self.lr_schedule))
+
+    def fn_set_lr(self, step):
+        lr = self.fn_lr_at_step(step)
+        for param_group in self.opt.param_groups:
+            param_group['lr'] = lr
+        return lr
+
+    ########################################################################################    
+    ## smoothed loss, for logging only (never feeds back into training)
+    def fn_update_loss_ema(self, loss_value):
+        if self.loss_ema_decay <= 0.0:
+            return None
+        if self.loss_ema is None:
+            self.loss_ema = loss_value
+        else:
+            self.loss_ema = self.loss_ema_decay * self.loss_ema + (1.0 - self.loss_ema_decay) * loss_value
+        return self.loss_ema
+
     ########################################################################################    
     def save(self, milestone):
         if not self.accelerator.is_local_main_process:
@@ -148,6 +215,7 @@ class Trainer:
             'opt': self.opt.state_dict(),
             'ema': self.ema.state_dict(),
             'scaler': self.accelerator.scaler.state_dict() if exists(self.accelerator.scaler) else None,
+            'loss_ema': self.loss_ema,
         }
 
         torch.save(data, str(self.results_folder / f'model-{milestone}.pt'))
@@ -171,6 +239,9 @@ class Trainer:
 
         if exists(self.accelerator.scaler) and exists(data['scaler']):
             self.accelerator.scaler.load_state_dict(data['scaler'])
+
+        # loss EMA is logging-only; .get() so checkpoints written before it existed still load
+        self.loss_ema = data.get('loss_ema', None)
 
         # Multi-GPU (DDP) resume: re-prepare the model and optimizer so the
         # optimizer's param groups are re-linked to the freshly-wrapped model.
@@ -470,6 +541,11 @@ class Trainer:
             logging_file.close()
         with open(log_filename, 'a') as file:
             file.write("\n===================================================================================================")
+            # the log is appended to across resume phases, so record the schedule each phase ran under
+            file.write("\n LR schedule: {}, base={:.3e}, min={:.3e}, warmup={}, total={}".format(
+                self.lr_schedule, self.base_lr, self.lr_min_lr, self.lr_warmup_steps, self.train_num_steps))
+            if self.step > 0:
+                file.write("\n resumed at step {}, LR={:.3e}".format(self.step, self.fn_lr_at_step(self.step)))
 
         with tqdm(initial = self.step, total = self.train_num_steps, disable = not accelerator.is_main_process) as pbar:
 
@@ -531,8 +607,11 @@ class Trainer:
                 ##end for _
 
                 # pbar.set_description(f'loss: {total_loss:.4f}')
-                
-                pbar.set_description("loss: {:.4f} ({:.4f}/{:.4f})".format(total_loss, total_denoise_loss, total_aux_reg_loss))
+
+                # LR for the step we are about to take, from the deterministic schedule
+                lr = self.fn_set_lr(self.step)
+
+                pbar.set_description("loss: {:.4f} ({:.4f}/{:.4f}) lr: {:.2e}".format(total_loss, total_denoise_loss, total_aux_reg_loss, lr))
                 
                 accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 accelerator.wait_for_everyone()
@@ -544,11 +623,15 @@ class Trainer:
                 accelerator.wait_for_everyone()
 
                 self.step += 1
+                self.fn_update_loss_ema(total_loss)
                 if accelerator.is_main_process:
                     
                     if self.step%500==0:
                         with open(log_filename, 'a') as file:
-                            file.write("\n Step: {}, Loss: {:.4f} ({:.4f}/{:.4f}), Time: {:.4f} sec.".format(self.step, total_loss, total_denoise_loss, total_aux_reg_loss, timeit.default_timer()-start_time))
+                            file.write("\n Step: {}, Loss: {:.4f} ({:.4f}/{:.4f}), EMA: {}, LR: {:.3e}, Time: {:.4f} sec.".format(
+                                self.step, total_loss, total_denoise_loss, total_aux_reg_loss,
+                                "{:.4f}".format(self.loss_ema) if self.loss_ema is not None else "n/a",
+                                lr, timeit.default_timer()-start_time))
                     
                     self.ema.update()
                     if self.step != 0 and divisible_by(self.step, self.sample_every):

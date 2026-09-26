@@ -53,6 +53,18 @@ def parse_opts():
     parser.add_argument('--opt_adam_beta1', type=float, default=0.5)
     parser.add_argument('--opt_adam_beta2', type=float, default=0.999)
 
+    ## learning-rate schedule (deterministic, f(step); no reactive/plateau control)
+    # constant is the EDM reference recipe (Karras et al. 2022) and the default, so
+    # runs that don't ask for a schedule behave exactly as before.
+    parser.add_argument('--lr_schedule', type=str, default='constant', choices=['constant','cosine','linear','exp'],
+                        help='LR schedule shape, as a deterministic function of the global step')
+    parser.add_argument('--lr_warmup_steps', type=int, default=0, metavar='N',
+                        help='linear warmup over the first N steps (0 disables). A resume at step >= N skips warmup.')
+    parser.add_argument('--lr_min_lr_frac', type=float, default=0.0,
+                        help='final LR as a fraction of --train_lr (floor of the decay)')
+    parser.add_argument('--loss_ema_decay', type=float, default=0.999,
+                        help='EMA decay for the smoothed training loss that is logged alongside the raw loss; 0 disables. Logging-only, does not affect training.')
+
     ## label embedding setting: 
     # short label embedding
     parser.add_argument('--y2h_embed_type', type=str, default='resnet', choices=['resnet', 'sinusoidal', 'gaussian']) #for y to h

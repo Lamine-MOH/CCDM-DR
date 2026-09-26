@@ -23,6 +23,8 @@ shift 2
 #   --num_steps N, --batch_size N, --grad_accum N, --samp_batch_size N
 #   --resume_step N (resume from model-N.pt), --save_every N
 #   --skip_final_sampling (end phase after training, no sampling/fake-data dump)
+#   --lr_schedule cosine --lr_warmup_steps 1000 --lr_min_lr_frac 0.1 (opt-in LR decay;
+#     off by default, i.e. constant LR, which is the EDM reference recipe)
 NUM_STEPS=60000
 BATCH_SIZE=32
 GRAD_ACCUM=4
@@ -30,6 +32,9 @@ SAMP_BATCH_SIZE=100
 RESUME_STEP=0
 SAVE_EVERY=5000
 SKIP_FINAL_SAMPLING=0
+LR_SCHEDULE=constant
+LR_WARMUP=0
+LR_MIN_FRAC=0.0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -39,6 +44,9 @@ while [[ $# -gt 0 ]]; do
         --samp_batch_size)    SAMP_BATCH_SIZE="$2"; shift 2 ;;
         --resume_step)        RESUME_STEP="$2"; shift 2 ;;
         --save_every)         SAVE_EVERY="$2"; shift 2 ;;
+        --lr_schedule)        LR_SCHEDULE="$2"; shift 2 ;;
+        --lr_warmup_steps)    LR_WARMUP="$2"; shift 2 ;;
+        --lr_min_lr_frac)     LR_MIN_FRAC="$2"; shift 2 ;;
         --skip_final_sampling) SKIP_FINAL_SAMPLING=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -66,6 +74,7 @@ python main.py \
     --batch_size_embed 256 --batch_size_embed_y2cov 256 \
     --num_img_per_label_after_replica 1000 \
     --train_num_steps $NUM_STEPS --resume_step $RESUME_STEP --train_lr 1e-4 \
+    --lr_schedule $LR_SCHEDULE --lr_warmup_steps $LR_WARMUP --lr_min_lr_frac $LR_MIN_FRAC \
     --train_batch_size $BATCH_SIZE --gradient_accumulate_every $GRAD_ACCUM \
     --train_amp --train_mixed_precision fp16 \
     --kernel_sigma $SIGMA --threshold_type $TYPE --kappa $KAPPA \
