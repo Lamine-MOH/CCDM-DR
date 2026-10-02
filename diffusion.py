@@ -520,7 +520,10 @@ class ElucidatedDiffusion(nn.Module):
         return reg_loss
 
     ## given a batch of images and labels, compute the training loss
-    def forward(self, images, labels, labels_emb, vicinal_weights = None, max_kappa=0):
+    ## return_diag=True additionally returns (sigmas, per_sample_loss) for logging the
+    ## loss broken down by noise level; the aggregate loss is dominated by small sigma
+    ## (weight ~ 1/sigma) so it cannot show where training is stuck.
+    def forward(self, images, labels, labels_emb, vicinal_weights = None, max_kappa=0, return_diag=False):
         batch_size, c, h, w, dtype, image_size, channels = *images.shape, images.dtype, self.image_size, self.channels
 
         # normalized images from [0,1] to [-1,1]
@@ -567,6 +570,9 @@ class ElucidatedDiffusion(nn.Module):
         else:
             loss = reduce(loss, 'b ... -> b', 'mean') # batch_size,  
 
+        # loss is (batch_size,) here, i.e. each sample's actual contribution to the mean
+        per_sample_loss = loss.detach().float() if return_diag else None
+
         denoise_loss = loss.mean()
         
         if self.aux_loss_params["use_aux_reg_loss"]:
@@ -581,4 +587,9 @@ class ElucidatedDiffusion(nn.Module):
             aux_reg_loss = torch.tensor([0.0]).to(self.device)
             aux_reg_weight = torch.tensor([0.0]).to(self.device)
         
+        if return_diag:
+            # sigmas can arrive as bfloat16 (--train_mixed_precision bf16 casts the batch),
+            # so cast for the log-time bucketize
+            return denoise_loss, aux_reg_loss, aux_reg_weight, sigmas.detach().float(), per_sample_loss
+
         return denoise_loss, aux_reg_loss, aux_reg_weight

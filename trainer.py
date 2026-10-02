@@ -133,6 +133,14 @@ class Trainer:
         self.loss_ema_decay = loss_ema_decay
         self.loss_ema = None
 
+        # loss broken down by noise level, for logging only. log(sigma) ~ N(-1.2, 1.2^2)
+        # puts ~96% of its mass in [0.01, 10], and these edges are evenly spaced in
+        # log-sigma, so the two outer buckets are sparse but not empty.
+        self.sigma_bucket_edges = [0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0]
+        self.sigma_bucket_labels = ['<0.01'] + ['{}-{}'.format(self.sigma_bucket_edges[i], self.sigma_bucket_edges[i+1]) for i in range(len(self.sigma_bucket_edges)-1)] + ['>10']
+        self.num_sigma_buckets = len(self.sigma_bucket_labels)
+        self._diag_reset()
+
         # init. EMA
         if self.accelerator.is_main_process:
             self.ema = EMA(diffusion_model, update_after_step=ema_update_after_step, beta = ema_decay, update_every = ema_update_every, coerce_dtype=True) #coerce_dtype make sure EMA is compatible with multi-GPU
@@ -151,6 +159,78 @@ class Trainer:
 
         # make the step-0 LR explicit, so the schedule is in force from the very first update
         self.fn_set_lr(self.step)
+
+    ########################################################################################    
+    ## diagnostics accumulators, for logging only (never feed back into training).
+    ## Kept as device tensors and read once per log entry, so the training loop pays no
+    ## per-step host-device sync; the per-step cost is a few kernels on batch_size elements.
+    def _diag_reset(self):
+        self._gn_sum = None      # running sum of grad norms over the window
+        self._gn_max = None      # running max
+        self._gn_n = 0           # number of grad-norm samples in the window
+        self._gn_nfin = None     # non-finite grad norms in the window (fp16 scaler-skip proxy)
+        self._sig_sum = None     # per-bucket sum of the per-sample loss
+        self._sig_cnt = None     # per-bucket sample count
+        self._sig_edges_t = None # bucket edges as a tensor, built lazily on the right device
+
+    def _diag_accumulate_grad_norm(self, grad_norm):
+        if grad_norm is None:
+            return
+        if not torch.is_tensor(grad_norm):
+            grad_norm = torch.tensor(float(grad_norm))
+        grad_norm = grad_norm.detach().float().reshape(())
+        # A single overflowing step would make the whole window's mean inf and hide
+        # the other 499 samples, so non-finite norms are EXCLUDED from the running
+        # sum/max and only counted in nfin. torch.where is device-side: no host sync.
+        is_finite = torch.isfinite(grad_norm)
+        g_safe = torch.where(is_finite, grad_norm, torch.zeros_like(grad_norm))
+        nfin = (~is_finite).to(torch.float32)
+        if self._gn_sum is None:
+            self._gn_sum, self._gn_max, self._gn_nfin = g_safe.clone(), g_safe.clone(), nfin
+        else:
+            self._gn_sum = self._gn_sum + g_safe
+            self._gn_max = torch.maximum(self._gn_max, g_safe)
+            self._gn_nfin = self._gn_nfin + nfin
+        self._gn_n += 1
+
+    def _diag_accumulate_sigma_buckets(self, sigmas, per_sample_loss):
+        if sigmas is None or per_sample_loss is None:
+            return
+        sigmas = sigmas.detach().float().reshape(-1)
+        per_sample_loss = per_sample_loss.detach().float().reshape(-1)
+        if per_sample_loss.numel() != sigmas.numel():
+            return
+        if self._sig_edges_t is None or self._sig_edges_t.device != sigmas.device:
+            self._sig_edges_t = torch.tensor(self.sigma_bucket_edges, device=sigmas.device, dtype=torch.float32)
+        # right=False: bucket i covers (edge[i-1], edge[i]], matching the printed labels
+        bucket = torch.bucketize(sigmas, self._sig_edges_t)
+        b_sum = torch.bincount(bucket, weights=per_sample_loss, minlength=self.num_sigma_buckets)
+        b_cnt = torch.bincount(bucket, minlength=self.num_sigma_buckets)
+        if self._sig_sum is None:
+            self._sig_sum, self._sig_cnt = b_sum, b_cnt
+        else:
+            self._sig_sum, self._sig_cnt = self._sig_sum + b_sum, self._sig_cnt + b_cnt
+
+    def _diag_report(self):
+        """Format this window's diagnostics as (gnorm_field, sigma_line), then reset."""
+        if self._gn_sum is not None and self._gn_n > 0:
+            nfin = int(self._gn_nfin.item())
+            n_ok = self._gn_n - nfin
+            if n_ok > 0:
+                gn = ", GNorm: mean={:.2e} max={:.2e} nfin={}".format(
+                    self._gn_sum.item() / n_ok, self._gn_max.item(), nfin)
+            else:
+                gn = ", GNorm: non-finite in every one of {} steps".format(self._gn_n)
+        else:
+            gn = ""
+        sig_line = ""
+        if self._sig_sum is not None:
+            sums, cnts = self._sig_sum.tolist(), self._sig_cnt.tolist()
+            cells = ["{} {:.4f}x{}".format(lbl, (s / c) if c else float('nan'), int(c))
+                     for lbl, s, c in zip(self.sigma_bucket_labels, sums, cnts)]
+            sig_line = "\n  sigma-loss: " + " | ".join(cells)
+        self._diag_reset()
+        return gn, sig_line
 
     ########################################################################################    
     @property
@@ -551,6 +631,9 @@ class Trainer:
 
             start_time = timeit.default_timer()
 
+            # diagnostics are only ever read by the main process when writing the log
+            accumulate_diag = accelerator.is_main_process
+
             while self.step < self.train_num_steps:
                 
                 total_loss = 0.
@@ -595,12 +678,15 @@ class Trainer:
                     with self.accelerator.autocast():
                         with torch.no_grad():
                             labels_emb = self.fn_y2h(batch_target_labels)
-                        denoise_loss, aux_reg_loss, aux_reg_weight = self.model(images=batch_images, labels=batch_target_labels, labels_emb=labels_emb, vicinal_weights = real_weights, max_kappa = max_kappa)
+                        denoise_loss, aux_reg_loss, aux_reg_weight, sigmas_diag, per_sample_loss = self.model(images=batch_images, labels=batch_target_labels, labels_emb=labels_emb, vicinal_weights = real_weights, max_kappa = max_kappa, return_diag=True)
                         loss = denoise_loss + aux_reg_loss * aux_reg_weight #denoising loss with auxiliary regression penalty (with weight)
                         loss = loss / float(self.gradient_accumulate_every)
                         total_loss += loss.item()  
                         total_denoise_loss += denoise_loss.item() / float(self.gradient_accumulate_every)
                         total_aux_reg_loss += aux_reg_loss.item() / float(self.gradient_accumulate_every)
+                        if accumulate_diag:
+                            self._diag_accumulate_sigma_buckets(sigmas_diag, per_sample_loss)
+                        del sigmas_diag, per_sample_loss
                     
                     self.accelerator.backward(loss)
                     
@@ -613,7 +699,11 @@ class Trainer:
 
                 pbar.set_description("loss: {:.4f} ({:.4f}/{:.4f}) lr: {:.2e}".format(total_loss, total_denoise_loss, total_aux_reg_loss, lr))
                 
-                accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                # clip_grad_norm_ returns the total norm BEFORE clipping; kept for logging
+                grad_norm = accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                if accumulate_diag:
+                    self._diag_accumulate_grad_norm(grad_norm)
+                del grad_norm
                 accelerator.wait_for_everyone()
                 # accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 
@@ -627,11 +717,13 @@ class Trainer:
                 if accelerator.is_main_process:
                     
                     if self.step%500==0:
+                        gn_field, sigma_line = self._diag_report()
                         with open(log_filename, 'a') as file:
-                            file.write("\n Step: {}, Loss: {:.4f} ({:.4f}/{:.4f}), EMA: {}, LR: {:.3e}, Time: {:.4f} sec.".format(
+                            file.write("\n Step: {}, Loss: {:.4f} ({:.4f}/{:.4f}), EMA: {}, LR: {:.3e}{}, Time: {:.4f} sec.".format(
                                 self.step, total_loss, total_denoise_loss, total_aux_reg_loss,
                                 "{:.4f}".format(self.loss_ema) if self.loss_ema is not None else "n/a",
-                                lr, timeit.default_timer()-start_time))
+                                lr, gn_field, timeit.default_timer()-start_time))
+                            file.write(sigma_line)
                     
                     self.ema.update()
                     if self.step != 0 and divisible_by(self.step, self.sample_every):
