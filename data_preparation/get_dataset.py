@@ -72,7 +72,10 @@ def dataset_download(dataset_name, data_path="./data/"):
         
         # Download
         os.makedirs(data_path, exist_ok=True)
-        gdown.download(file_id, output=zip_path, quiet=False, fuzzy=True)
+        try:
+            gdown.download(file_id, output=zip_path, quiet=False, fuzzy=True)
+        except TypeError:
+            gdown.download(file_id, output=zip_path, quiet=False)
         
         # Unzip
         print(f"Extracting file {zip_path} ...")
