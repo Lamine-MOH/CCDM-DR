@@ -362,9 +362,15 @@ python analysis/embedding_map.py \
     --synthetic    cs4.0=output/generated_cs4.0/generated.h5 \
     --aug train,popular \
     --max_per_grade 500 \
+    --pairs real \
     --method both \
     --out_dir experiments_outputs/embedding_map
 ```
+
+`--pairs real` (default) writes one dedicated **1-vs-1** figure per source against
+the real training set; `--pairs all` compares every unordered pair and
+`--pairs none` disables the pairwise figures. The pairwise maps reuse the same
+embedding, so they can be regenerated with `--reuse_features`:
 
 Replot the same features with another projection (no h5 re-read):
 
@@ -391,9 +397,11 @@ look use `--method pca --no_thumbnails --max_per_grade 200`.
 |---|---|
 | `umap_by_source.png` | one panel per source, colour = grade; real stays as light-grey background in non-real panels; last panel overlays all sources |
 | `umap_by_grade.png` | five per-grade panels, colour = source — the direct "does synthetic cover grade g?" view |
+| `umap_pair_real_vs_<name>.png` | dedicated 1-vs-1 map for each pair (`--pairs real`): global panel + one panel per grade; with `--pairs all` the names are `umap_pair_<a>_vs_<b>.png` |
 | `umap_thumbnails.png` | actual image thumbnails placed at their 2D coordinates (sampled) |
 | `embedding_projection.csv` | `method, source, split, grade, index, x, y` |
 | `embedding_metrics.csv` | per source × grade numbers (below) |
+| `pairwise_metrics.csv` | per pair (overall + per grade): B→A nearest ratio, B's neighbour fraction in A, energy distance (below) |
 | `embedding_features.npz` | feature/meta/thumbnail cache for `--reuse_features` |
 | `run_config.json` | parameters, per-source/per-grade counts, PCA explained variance |
 
@@ -412,6 +420,19 @@ look use `--method pca --no_thumbnails --max_per_grade 200`.
 - **`silhouette_grade`** — on the `grade=all` row: how well the five grades
   remain separated *within that source*. Compare it to the real row: a
   synthetic pool with much lower silhouette has smeared grade structure.
+
+`pairwise_metrics.csv` is the 1-vs-1 companion, with B measured against A:
+
+- **`nn_a_ratio`** — median B→nearest-A distance divided by the median
+  within-grade A–A nearest-neighbour distance. ≈1: B sits as close to A as A
+  sits to itself; ≫1: B is off A's manifold.
+- **`knn_a_frac`** — fraction of B's 10 nearest neighbours (pool = A + B) that
+  belong to A. Low = B occupies a region A does not cover.
+- **`energy_distance`** — symmetric distribution distance between A and B.
+
+In the pairwise figures, source A (normally real) is drawn in grey and source B
+in its source colour; the five grade panels show whether B covers the same
+region as A within each grade, rather than only in the global projection.
 
 ### Caveats
 

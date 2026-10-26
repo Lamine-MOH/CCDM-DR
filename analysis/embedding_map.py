@@ -26,6 +26,7 @@ Compared sources:
 Outputs (into --out_dir):
     {method}_by_source.png     one panel per source + an all-source overlay
     {method}_by_grade.png      one panel per grade, colour = source
+    {method}_pair_a_vs_b.png   1-vs-1 map: global panel + one panel per grade
     {method}_thumbnails.png    actual image thumbnails at their 2D coordinates
     embedding_projection.csv   x, y, source, split, grade, h5 index, method
     embedding_metrics.csv      per source x grade, in PCA space:
@@ -36,6 +37,9 @@ Outputs (into --out_dir):
                                  energy_distance distribution distance to
                                                  same-grade real
                                  silhouette_grade  (grade='all' row only)
+    pairwise_metrics.csv       per pair: B nearest-A ratio, fraction of B's
+                               neighbours in A, and energy distance, overall
+                               and per grade (--pairs real|all)
     embedding_features.npz     feature/meta cache for --reuse_features
     run_config.json            parameters + per-source counts
 
@@ -49,6 +53,9 @@ Usage:
         --out_dir experiments_outputs/embedding_map
 
 Notes / caveats:
+    * --pairs real (default) writes one dedicated 1-vs-1 map per source against
+      the real training set; --pairs all compares every unordered pair and
+      --pairs none disables them.
     * Pixel space is dominated by global colour, illumination and framing.
       That is a property of the data, not a bug -- but read the per-grade
       panels and the PCA-space metrics, not just the global blobs.
@@ -567,6 +574,70 @@ def compute_metrics(z, meta, out_csv, seed):
     return rows
 
 
+def _self_nn_within_grade(z, grades):
+    """Median nearest-neighbour distance inside each grade (pooled)."""
+    parts = []
+    for g in np.unique(grades):
+        m = grades == g
+        if int(m.sum()) > 1:
+            d, _ = cKDTree(z[m]).query(z[m], k=2)
+            parts.append(d[:, 1])
+    if not parts:
+        return None
+    return float(np.median(np.concatenate(parts)))
+
+
+def compute_pairwise_metrics(z, meta, pairs, out_csv, seed):
+    """Per-pair distribution numbers: B relative to A, overall and per grade."""
+    sources = meta["source"]
+    grades = meta["grade"]
+    rows = []
+
+    for a, b in pairs:
+        m_a = sources == a
+        m_b = sources == b
+        for g in ("all",) + GRADES:
+            if g == "all":
+                za, zb, ga = z[m_a], z[m_b], grades[m_a]
+            else:
+                sel_a = m_a & (grades == g)
+                sel_b = m_b & (grades == g)
+                za, zb, ga = z[sel_a], z[sel_b], grades[sel_a]
+            if len(za) == 0 or len(zb) == 0:
+                continue
+            base = _self_nn_within_grade(za, ga)
+            nn = _nn_distances(zb, za)
+            ratio = float(np.median(nn) / base) if base else float("nan")
+            rows.append({
+                "a": a,
+                "b": b,
+                "grade": g,
+                "n_a": int(len(za)),
+                "n_b": int(len(zb)),
+                "nn_a_ratio": f"{ratio:.4f}" if np.isfinite(ratio) else "",
+                "knn_a_frac": f"{_knn_real_fraction(zb, za):.4f}",
+                "energy_distance": f"{_energy_distance(za, zb, seed):.4f}",
+            })
+
+    with open(out_csv, "w", newline="") as f:
+        writer = csv.DictWriter(
+            f, fieldnames=["a", "b", "grade", "n_a", "n_b",
+                           "nn_a_ratio", "knn_a_frac", "energy_distance"],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print("\nPairwise metrics (PCA space; B measured against A)")
+    print(f"{'A':>16} {'B':>16} {'grade':>5} {'nA':>5} {'nB':>5} "
+          f"{'nn/r':>7} {'knnA':>7} {'energy':>8}")
+    for r in rows:
+        print(f"{r['a']:>16} {r['b']:>16} {str(r['grade']):>5} "
+              f"{r['n_a']:>5} {r['n_b']:>5} {r['nn_a_ratio']:>7} "
+              f"{r['knn_a_frac']:>7} {r['energy_distance']:>8}")
+    print(f"\nwrote {out_csv}")
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # plotting
 # ---------------------------------------------------------------------------
@@ -593,6 +664,29 @@ def _robust_limits(xy):
     hi = np.percentile(xy, 99.5, axis=0)
     pad = 0.05 * np.maximum(hi - lo, 1e-9)
     return lo - pad, hi + pad
+
+
+def _safe_name(name):
+    return "".join(c if (c.isalnum() or c in "._-") else "_" for c in name)
+
+
+def make_pairs(sources, mode):
+    """Pair list for the 1-vs-1 figures.
+
+    real : every non-real source against the real training set (recommended)
+    all  : every unordered pair of sources
+    none : no pairwise figures
+    """
+    if mode == "none" or len(sources) < 2:
+        return []
+    if mode == "real":
+        if "real" not in sources:
+            return []
+        return [("real", s) for s in sources if s != "real"]
+    return [(sources[i], sources[j])
+            for i in range(len(sources))
+            for j in range(i + 1, len(sources))]
+
 
 
 def _grade_legend(fig):
@@ -696,6 +790,60 @@ def plot_by_grade(xy, meta, out_path, method):
 
     fig.suptitle(f"{method.upper()} — per-grade view of real vs augmented vs "
                  f"synthetic", fontsize=11)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  wrote {out_path}")
+
+
+def plot_pair(xy, meta, out_path, method, a, b, palette):
+    """One dedicated 1-vs-1 map: global panel + one panel per grade."""
+    lo, hi = _robust_limits(xy)
+    m_a = meta["source"] == a
+    m_b = meta["source"] == b
+
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9.6), squeeze=False)
+    axes = axes.ravel()
+
+    ax = axes[0]
+    if m_a.any():
+        ax.scatter(xy[m_a, 0], xy[m_a, 1], c=palette[a], s=5, alpha=0.55,
+                   linewidths=0, rasterized=True, label=_display(a))
+    if m_b.any():
+        ax.scatter(xy[m_b, 0], xy[m_b, 1], c=palette[b], s=5, alpha=0.65,
+                   linewidths=0, rasterized=True, label=_display(b))
+    ax.set_title(
+        f"All grades — {_display(a)} vs {_display(b)}  "
+        f"(n={int(m_a.sum())} / {int(m_b.sum())})", fontsize=10,
+    )
+    ax.legend(loc="best", fontsize=8, frameon=True)
+
+    for g, ax in zip(GRADES, axes[1:]):
+        ma_g = m_a & (meta["grade"] == g)
+        mb_g = m_b & (meta["grade"] == g)
+        if ma_g.any():
+            ax.scatter(xy[ma_g, 0], xy[ma_g, 1], c=palette[a], s=6,
+                       alpha=0.55, linewidths=0, rasterized=True)
+        if mb_g.any():
+            ax.scatter(xy[mb_g, 0], xy[mb_g, 1], c=palette[b], s=6,
+                       alpha=0.70, linewidths=0, rasterized=True)
+        ax.set_title(
+            f"{GRADE_NAMES[g]}  (n={int(ma_g.sum())} / {int(mb_g.sum())})",
+            fontsize=10,
+        )
+
+    for ax in axes:
+        ax.set_xlim(lo[0], hi[0])
+        ax.set_ylim(lo[1], hi[1])
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_xlabel(f"{method.upper()}-1", fontsize=8)
+        ax.set_ylabel(f"{method.upper()}-2", fontsize=8)
+
+    fig.suptitle(
+        f"{method.upper()} — 1-vs-1 comparison: {_display(a)} vs {_display(b)}",
+        fontsize=11,
+    )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
@@ -836,6 +984,9 @@ def parse_args(argv=None):
     p.add_argument("--no_metrics", action="store_true")
     p.add_argument("--no_thumbnails", action="store_true")
     p.add_argument("--thumbnails_max", type=int, default=240)
+    p.add_argument("--pairs", default="real", choices=["real", "all", "none"],
+                   help="1-vs-1 maps: 'real' = every source against real_train, "
+                        "'all' = every unordered pair, 'none' = disable")
     return p.parse_args(argv)
 
 
@@ -929,6 +1080,7 @@ def main(argv=None):
         "umap_min_dist": args.umap_min_dist,
         "tsne_perplexity": args.tsne_perplexity,
         "seed": args.seed,
+        "pairs": args.pairs,
     }
 
     cache_path = os.path.join(args.out_dir, "embedding_features.npz")
@@ -1032,8 +1184,12 @@ def main(argv=None):
         thumbs = np.concatenate([b["thumbs"] for b in blocks])
 
     sources = list(dict.fromkeys(meta["source"].tolist()))
+    pairs = make_pairs(sources, args.pairs)
     print(f"\n[done] {len(feats)} points, {feats.shape[1]}-d raw features, "
           f"sources={sources}")
+    if pairs:
+        print(f"[pairs] {len(pairs)} 1-vs-1 map(s): "
+              f"{', '.join(f'{a} vs {b}' for a, b in pairs)}")
 
     # Give the handcrafted statistics a meaningful share of the variance;
     # without this they are swamped by the ~7k pixel dimensions.
@@ -1098,8 +1254,15 @@ def main(argv=None):
             os.path.join(args.out_dir, "embedding_metrics.csv"),
             args.seed,
         )
+        if pairs:
+            compute_pairwise_metrics(
+                z, meta, pairs,
+                os.path.join(args.out_dir, "pairwise_metrics.csv"),
+                args.seed,
+            )
 
     # ---- figures ------------------------------------------------------------
+    palette = _source_palette(sources)
     for method, xy in projections.items():
         print(f"[plot] {method}")
         plot_by_source(
@@ -1110,6 +1273,15 @@ def main(argv=None):
             xy, meta,
             os.path.join(args.out_dir, f"{method}_by_grade.png"), method,
         )
+        for a, b in pairs:
+            plot_pair(
+                xy, meta,
+                os.path.join(
+                    args.out_dir,
+                    f"{method}_pair_{_safe_name(a)}_vs_{_safe_name(b)}.png",
+                ),
+                method, a, b, palette,
+            )
         if not args.no_thumbnails and len(thumbs):
             plot_thumbnails(
                 xy, meta, thumbs,
