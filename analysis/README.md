@@ -302,3 +302,144 @@ Runs sequentially (real then augmented per seed); each run is ~20-40 min GPU.
 Writes `{OUT_DIR}/real_only_r50_s{111..115}_metrics.json` and
 `real_plus_synth_blendA_r50_s{111..115}_metrics.json`, then prints the
 `seed_report.py` command to aggregate them.
+
+## `embedding_map.py` — 2D image-space map: real vs augmentation vs synthetic
+
+Answers the distribution question directly: **where does the synthetic data
+actually sit relative to the real data and to classical augmentation?** No
+classifier and no pretrained network is involved, so the projection describes
+the image content itself rather than a model's feature space.
+
+Each image is fundus-cropped (removes black-border/framing differences),
+padded to a square, resized to `48×48` RGB (default), flattened, and optionally
+extended with model-free colour/texture statistics (`--extra_feats`). All
+sources are concatenated, PCA-compressed to 64 dims (fit once on the union),
+and projected to 2D with UMAP (default) and/or t-SNE. Because every source
+shares one embedding, their positions are directly comparable.
+
+### Compared arms
+
+| arm | definition |
+|---|---|
+| `real` | real training h5, per-grade capped |
+| `real_test` | optional real test h5 (natural-variation reference) |
+| `aug_train` | exactly the downstream pipeline: horizontal flip p=.5, rotation ±8°, fill=0 |
+| `aug_popular` | h/v flip, rotation ±15°, resized crop (scale .85-1.0, ratio .9-1.1), colour jitter (brightness/contrast .2, saturation .15, hue .02), Gaussian blur p=.2, 16×16 cutout p=.25 |
+| `<name>` | any synthetic pool passed as `--synthetic NAME=PATH` (repeatable) |
+
+Augmentations are generated with a fixed seed from the **same** real images, so
+every augmented point has an exact real counterpart. One replica per image by
+default (`--aug_reps N` for more).
+
+### Dependencies
+
+`h5py`, `scipy`, `scikit-learn`, `matplotlib`, `Pillow` are already in
+`requirements.txt`. The default UMAP projection additionally needs:
+
+```bash
+pip install umap-learn
+```
+
+`--method tsne` and `--method pca` work without it.
+
+### Commands (Aptos 128, canonical pools)
+
+```bash
+# 1. real data (skip if the h5 files already exist)
+python data_preparation/download_h5.py --dataset Aptos --resolution 128
+# -> data/DRGrading/Aptos/DRGrading_128x128_{train,test}.h5
+
+# 2. canonical headline pool + one uniform (all-grade) pool
+ls output/blends/blendA_g3cs4.h5            # built by analysis/run_matrix.sh
+ls output/generated_cs4.0/generated.h5      # uniform cs=4.0 pool
+# If blendA_g3cs4.h5 is missing, the merge recipe is at the bottom of this section.
+
+# 3. the map
+python analysis/embedding_map.py \
+    --real_h5      data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
+    --real_test_h5 data/DRGrading/Aptos/DRGrading_128x128_test.h5 \
+    --synthetic    blendA_g3cs4=output/blends/blendA_g3cs4.h5 \
+    --synthetic    cs4.0=output/generated_cs4.0/generated.h5 \
+    --aug train,popular \
+    --max_per_grade 500 \
+    --method both \
+    --out_dir experiments_outputs/embedding_map
+```
+
+Replot the same features with another projection (no h5 re-read):
+
+```bash
+python analysis/embedding_map.py ... --reuse_features --method tsne
+```
+
+Structure-only robustness view (adds histograms, FFT high-frequency ratio, edge
+energy, local noise, redness; the statistics block is scaled to
+`--extra_feats_weight` = 0.5 of the pixel-block energy so it is not swamped by
+the ~7k pixel dimensions):
+
+```bash
+python analysis/embedding_map.py ... --extra_feats
+```
+
+Higher-resolution data: pass the 256 h5 paths and keep `--pixel_size 48` (the
+thumbnail size is independent of the source resolution). For a first quick
+look use `--method pca --no_thumbnails --max_per_grade 200`.
+
+### Outputs (`--out_dir`)
+
+| file | content |
+|---|---|
+| `umap_by_source.png` | one panel per source, colour = grade; real stays as light-grey background in non-real panels; last panel overlays all sources |
+| `umap_by_grade.png` | five per-grade panels, colour = source — the direct "does synthetic cover grade g?" view |
+| `umap_thumbnails.png` | actual image thumbnails placed at their 2D coordinates (sampled) |
+| `embedding_projection.csv` | `method, source, split, grade, index, x, y` |
+| `embedding_metrics.csv` | per source × grade numbers (below) |
+| `embedding_features.npz` | feature/meta/thumbnail cache for `--reuse_features` |
+| `run_config.json` | parameters, per-source/per-grade counts, PCA explained variance |
+
+`tsne_*` / `pca_*` figures are written instead of `umap_*` when requested.
+
+### Reading the metrics (computed in 64-d PCA space, not in 2D)
+
+- **`nn_real_ratio`** — distance from a point to its nearest same-grade real
+  image, divided by the median real-real nearest-neighbour distance in that
+  grade. ≈1 means "as close as another real image"; ≫1 means off-manifold.
+- **`knn_real_frac`** — fraction of its 10 nearest same-grade neighbours that
+  are real (pool = source + real). Low values indicate a detached/novel region;
+  for augmented arms it should be high because each point has a real twin.
+- **`energy_distance`** — distribution distance between the source and the
+  same-grade real cloud (0 = identical, larger = more separated).
+- **`silhouette_grade`** — on the `grade=all` row: how well the five grades
+  remain separated *within that source*. Compare it to the real row: a
+  synthetic pool with much lower silhouette has smeared grade structure.
+
+### Caveats
+
+- Pixel space is dominated by global colour, illumination and framing. That is
+  a real property of the data, not a bug, but it means the global UMAP blobs
+  mostly answer "do these look like the same acquisition?", while the per-grade
+  panels and the PCA-space metrics answer "does this cover the class?".
+- UMAP and t-SNE distort distances; never read absolute inter-cluster distances
+  off the 2D plots. Use the CSV metrics for distances.
+- `--max_per_grade` balances the visual comparison; without it, grade 0 would
+  dominate. The counts actually plotted are in `run_config.json` and the panel
+  titles.
+- `blendA_g3cs4` keeps grade 4 real-only by construction, so that pool has no
+  synthetic grade 4 (its grade-4 metrics row is absent). The uniform `cs4.0`
+  pool covers all five grades.
+- `--aug_popular` is deliberately aggressive (crop/zoom + photometric + blur +
+  cutout); it is a *classical baseline*, not the training pipeline. Use
+  `--aug train` alone for the exact training-time distribution.
+
+### Building `blendA_g3cs4.h5` if it is missing
+
+```bash
+python analysis/merge_h5_by_grade.py \
+    --sources \
+      "0=output/generated_cs4.0/generated.h5 1=output/generated_cs4.0/generated.h5 \
+       4=output/generated_cs4.0/generated.h5 2=output/generated_cs1.5/generated.h5 \
+       3=output/generated_cs4.0/generated.h5" \
+    --out output/blends/blendA_g3cs4.h5 --cap 1000 --caps_override "4=0"
+```
+
+This is the same per-grade recipe used by `run_matrix.sh` (g4 real-only).

@@ -102,7 +102,7 @@ orchestration.
 | `generate_from_ckpt.py` | **New.** Samples a trained checkpoint without re-training or loading the training set — the diffusion weights come from `model-{step}.pt`; the label-embedding nets and training yaml must be supplied separately. Writes `generated.h5` in the same schema as the training h5, ready for `train_dr_classifier.py --synthetic_h5`. `--out_dir` defaults to `output/generated_cs{cond_scale}` and the h5 stores its generation attrs (`cond_scale`, `model_ckpt`, ...) so a generated set is self-describing. |
 | `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/101, EfficientNet-B3..B5, DenseNet121/201) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
 | `downstream_eval/compare_runs.py` | **New.** Summarizes multiple `train_dr_classifier.py` runs into one comparison table. |
-| `analysis/` | **New.** Post-training diagnostics and downstream helpers: `trace_conditioning.py` (A1 grade-separability trace), `render_inspection_montages.py` (A3 per-grade montages), `run_diagnosis.sh`, `check_embedding.py` (E1), `sweep_cond_scale.py` (E2 CFG sweep, includes previews), `merge_h5_by_grade.py` (per-grade blend across CFG scales), `tag_h5.py` (stamp generation attrs on legacy h5s), `seed_report.py` (mean±std aggregation across classifier seeds). See `analysis/README.md`. |
+| `analysis/` | **New.** Post-training diagnostics and downstream helpers: `trace_conditioning.py` (A1 grade-separability trace), `render_inspection_montages.py` (A3 per-grade montages), `run_diagnosis.sh`, `check_embedding.py` (E1), `sweep_cond_scale.py` (E2 CFG sweep, includes previews), `merge_h5_by_grade.py` (per-grade blend across CFG scales), `tag_h5.py` (stamp generation attrs on legacy h5s), `seed_report.py` (mean±std aggregation across classifier seeds), `embedding_map.py` (2D image-space map of real vs classical augmentation vs synthetic). See `analysis/README.md`. |
 
 ## What was removed vs. upstream
 
@@ -212,6 +212,7 @@ CCDM-DR/
 │   ├── trace_conditioning.py, render_inspection_montages.py, run_diagnosis.sh
 │   ├── check_embedding.py, sweep_cond_scale.py   # E1/E2 conditioning probes
 │   ├── merge_h5_by_grade.py, tag_h5.py, seed_report.py
+│   ├── embedding_map.py            # 2D map: real vs aug vs synthetic
 │   └── README.md                                 # diagnostics usage + thresholds
 ├── notebooks/
 │   └── dataset_prepare.ipynb      # end-to-end data-prep walkthrough (Colab-friendly)
