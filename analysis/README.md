@@ -310,6 +310,13 @@ actually sit relative to the real data and to classical augmentation?** No
 classifier and no pretrained network is involved, so the projection describes
 the image content itself rather than a model's feature space.
 
+> **Findings (APTOS 128, 2026-10-27):** see
+> [`EMBEDDING_MAP_FINDINGS.md`](EMBEDDING_MAP_FINDINGS.md). Headline:
+> `cs1.5` is the most real-like pool and `cs4.0` the most segregated; synthetic
+> data is more grade-separable but less diverse per grade than real; the
+> `blendA_g3cs4` g3 switch trades local realism for class-typicality; and the
+> per-grade blends confound grade with generator appearance.
+
 Each image is fundus-cropped (removes black-border/framing differences),
 padded to a square, resized to `48×48` RGB (default), flattened, and optionally
 extended with model-free colour/texture statistics (`--extra_feats`). All
