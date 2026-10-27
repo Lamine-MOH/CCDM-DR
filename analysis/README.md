@@ -313,9 +313,11 @@ the image content itself rather than a model's feature space.
 > **Findings (APTOS 128, 2026-10-27):** see
 > [`EMBEDDING_MAP_FINDINGS.md`](EMBEDDING_MAP_FINDINGS.md). Headline:
 > `cs1.5` is the most real-like pool and `cs4.0` the most segregated; synthetic
-> data is more grade-separable but less diverse per grade than real; the
-> `blendA_g3cs4` g3 switch trades local realism for class-typicality; and the
-> per-grade blends confound grade with generator appearance.
+> data is more grade-separable but less diverse per grade than real; coverage is
+> pool-dependent (`cs1.5` 92–99% of the real grade plane vs `cs4.0` 40–72%);
+> the `blendA_g3cs4` g3 switch trades local realism and coverage for
+> class-typicality; and the per-grade blends confound grade with generator
+> appearance.
 
 Each image is fundus-cropped (removes black-border/framing differences),
 padded to a square, resized to `48×48` RGB (default), flattened, and optionally
