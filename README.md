@@ -11,6 +11,15 @@ Unlike a typical fork, this one also had unused pieces of the upstream
 tree removed — see "What was removed" below if something you expected
 from the original repo isn't here.
 
+The generator itself was also modified, not just extended: the
+`models/unet_edm.py` and `diffusion.py` rows in the change table below
+summarise the architectural and correctness changes and what they
+invalidate. A full side-by-side comparison against upstream (label-embedding
+nets, covariance conditioning, the `UNet_EDM` conditioning path, per-block
+parameter accounting) lives in the author's **local, uncommitted** `docs/`
+notes — it is not shipped with this repository, so treat the table below as
+the authoritative public summary.
+
 ## Quick start
 
 ```bash
@@ -94,7 +103,10 @@ orchestration.
 | `evaluation/evaluator.py` | Added a `DRGrading` branch pointing to `./evaluation/eval_ckpts/DRGrading/...`. **These checkpoints don't exist yet** — see "The eval-checkpoint gap" below. |
 | `main.py` | **Bug fix.** Upstream unconditionally imports `evaluation/eval_models/{data_name}/metrics_{size}x{size}` right after training, regardless of `--do_eval`. That path doesn't exist for `DRGrading`, so every DR run would otherwise crash right after sampling — after the GPU time for training was already spent. This is now gated behind `if args.do_eval:` (a no-op for the original datasets). Also: device handling refactored for CPU fallback. |
 | `trainer.py` | Modified: added a visual-sample batch-size parameter, removed a batch-size-divisibility assertion, guarded covariance updates against empty label sets, and CPU-fallback device handling. |
-| `label_embedding.py`, `utils.py` | Lightly modified (CPU fallback in embedding/prediction device handling). |
+| `label_embedding.py` | Wired in the epoch/batch-size flags (`--epoch_cnn_embed`, `--epoch_cnn_embed_y2cov`, `--epoch_net_y2h`, `--epoch_net_y2cov`, `--batch_size_embed*`) that `opts.py` already exposed but `LabelEmbed` silently ignored — upstream hardcoded **10** epochs for both embedding CNNs, the DR configs use **200**. Also CPU fallback. |
+| `models/unet_edm.py` | **Architecture change.** Label conditioning is decoupled from the time embedding: each `UNetBlock` gets its own `affine_cond` projection (upstream concatenated time+label into one `affine`), and `cond_map` uses `LayerNorm` instead of `BatchNorm1d` (upstream's BN statistics were polluted by CFG dropout, which mixes real and null labels in one batch). Also a memory-bounded self-attention backend (`CCDM_ATTN_BACKEND`, default `sdpa` falling back to a query-chunked fp32 op) because EDM's full softmax matrix OOMs at 256 px. **Invalidates older checkpoints**; the full architecture comparison is in the author's local (uncommitted) `docs/` notes. |
+| `diffusion.py` | **Correctness fix.** The per-sample loss applied `√λ` instead of EDM's `λ` (an extra `.sqrt()` on `loss_weight`, which already returns `√λ`), relatively over-weighting high-noise samples; now `λ`. Plus `clamp(min=0)` on the SDE noise-injection radicand, empty-label-set guards in `cal_cov`/`cal_dcov`, and an opt-in `return_diag` path for per-σ-bucket loss logging. |
+| `utils.py` | Lightly modified (CPU fallback in embedding/prediction device handling). |
 | `data_preparation/get_dataset.py` | **New.** Downloads and normalizes APTOS/IDRiD/DDR/Messidor-2 into a common `{dataset}/Images/` + `labels.csv` structure. |
 | `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop, optional `--clahe`), a **stratified** held-out `--test_frac` split (default 0.20, `--min_test_per_grade` guard), and per-grade train/test count printouts. |
 | `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed). Supports `--dataset` and `--resolution` flags for selective downloads. |
@@ -185,11 +197,13 @@ CCDM-DR/
 ├── opts.py                        # modified: + DRGrading choice
 ├── main.py                        # modified: eval-model import gated behind --do_eval (bug fix)
 ├── trainer.py                     # modified: visual sample batch size, robustness/device fixes
-├── diffusion.py                   # unmodified
-├── label_embedding.py, utils.py   # lightly modified (CPU fallback)
+├── diffusion.py                   # MODIFIED: EDM loss weight λ (was √λ) + guards
+├── label_embedding.py             # MODIFIED: epoch/batch-size flags wired in (10 -> 200 epochs)
+├── utils.py                       # lightly modified (CPU fallback)
 ├── generate_from_ckpt.py          # NEW: sample a trained checkpoint without re-training
 ├── models/
-│   ├── unet_edm.py, unet_ccdm.py, dit.py    # three usable backbones (unmodified)
+│   ├── unet_edm.py                # MODIFIED: affine_cond label path, LayerNorm cond_map, attn backend
+│   ├── unet_ccdm.py, dit.py       # alternative backbones (unmodified, unused by DR configs)
 │   ├── resnet_y2h.py, resnet_y2cov.py, resnet_aux_regre.py, attend.py  # unmodified
 │   └── __init__.py                # modified: dropped the sngan import (file removed)
 ├── config/
@@ -199,7 +213,7 @@ CCDM-DR/
 │   └── model_cfg/                 # 64/128/256px x {unet_edm, unet_ccdm, dit}
 ├── evaluation/
 │   ├── evaluator.py               # modified: + DRGrading branch (checkpoint gap above)
-│   ├── eval_metrics.py            # FID/IS/MMD/label-score implementations (unmodified)
+│   ├── eval_metrics.py            # FID/IS/MMD/label-score implementations (batched-eval bug fixes)
 │   └── eval_models/                # empty except __init__.py -- see "What was removed"
 ├── data_preparation/
 │   ├── get_dataset.py              # download + normalize APTOS/IDRiD/DDR/Messidor-2
