@@ -37,6 +37,7 @@ from generate_from_ckpt import (  # noqa: E402
     build_diffusion,
     build_sigma_data_fn,
     load_ema_model,
+    load_sigma_data,
     make_embed_fns,
     sample_for_grade,
 )
@@ -61,6 +62,11 @@ def parse_args():
     p.add_argument("--y2cov_hy_weight_train", type=float, default=0.05)
     p.add_argument("--y2cov_hy_weight_test", type=float, default=0.05)
 
+    p.add_argument("--edm_sigma_data_type", type=str, default="default",
+                   choices=["default", "global", "local"],
+                   help="sigma_data scheme; authoritative value is read from "
+                        "edm_sigma_data.json next to the checkpoint. This flag is "
+                        "the fallback only when that file is missing.")
     p.add_argument("--edm_sigma_data_default", type=float, default=0.5)
     p.add_argument("--edm_sigma_min", type=float, default=0.002)
     p.add_argument("--edm_sigma_max", type=float, default=80)
@@ -102,7 +108,9 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
 
     fn_y2h, fn_y2cov = make_embed_fns(args, args.device)
-    diffusion = build_diffusion(args, build_sigma_data_fn(args.edm_sigma_data_default),
+    sigma_type, sigma_default_val, y_unique, sigma_unique = load_sigma_data(args)
+    fn_y2sigma_data = build_sigma_data_fn(sigma_type, sigma_default_val, y_unique, sigma_unique)
+    diffusion = build_diffusion(args, fn_y2sigma_data,
                                 fn_y2cov if args.use_y2cov else None)
     gen_model = load_ema_model(diffusion, args)
 
