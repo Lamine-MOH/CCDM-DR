@@ -117,6 +117,15 @@ def main():
     FEAT_NAMES = ["brightness", "R", "G", "B", "std", "RminusG", "edge_mag"]
     rows = []
 
+    # --grades may list more than two grades (every listed pool is generated),
+    # but the separability contrast is pairwise: lowest vs highest grade.
+    grades = sorted(set(args.grades))
+    if len(grades) < 2:
+        raise SystemExit("--grades needs at least 2 grades: the contrast is pairwise")
+    g0, g1 = grades[0], grades[-1]
+    print(" separability contrast: grade {} vs grade {} ({} images per grade)".format(
+        g0, g1, args.nfake))
+
     for cs in args.cond_scales:
         args.cond_scale = cs
         feats_by_grade, imgs_by_grade = {}, {}
@@ -132,7 +141,6 @@ def main():
                 preview, os.path.join(args.out_dir, "cs{}_grade{}.png".format(cs, g)),
                 nrow=6, normalize=False, padding=1)
 
-        g0, g1 = args.grades
         a, b = feats_by_grade[g0], feats_by_grade[g1]
 
         ds = {f: cohen_d(a[:, i], b[:, i]) for i, f in enumerate(FEAT_NAMES)}
@@ -147,10 +155,11 @@ def main():
             a[:, 0].mean(), b[:, 0].mean(), rf_acc))
 
         rows.append({
-            "cond_scale": cs, "grade": str(g0), "rf_binary_acc": rf_acc,
+            "cond_scale": cs, "grade": "{}-{}".format(g0, g1),
+            "n_per_grade": len(a), "rf_binary_acc": rf_acc,
             **{"d_" + f: ds[f] for f in FEAT_NAMES},
-            **{f + "_g0": a[:, i].mean() for i, f in enumerate(FEAT_NAMES)},
-            **{f + "_g1": b[:, i].mean() for i, f in enumerate(FEAT_NAMES)},
+            **{"{}_{}".format(f, "g{}".format(g0)): a[:, i].mean() for i, f in enumerate(FEAT_NAMES)},
+            **{"{}_{}".format(f, "g{}".format(g1)): b[:, i].mean() for i, f in enumerate(FEAT_NAMES)},
         })
 
         np.save(os.path.join(args.out_dir, "features_cs{}_{}v{}.npy".format(cs, g0, g1)),
@@ -166,12 +175,26 @@ def main():
 
     best = max(rows, key=lambda r: r["rf_binary_acc"])
     print("\n BEST cond_scale: {:.2f} (binary RF acc {:.1%})".format(best["cond_scale"], best["rf_binary_acc"]))
-    if best["rf_binary_acc"] >= 0.8:
+
+    # Separation alone is not a pass: past cs~8 it is bought by destroying the
+    # images, and RF=1.0 at cs>=16 separates two failure modes, not two grades.
+    # See docs/COND_SCALE_LIMITS.md (2026-10-29 sweep: usable band is cs 1.5-4).
+    ref = next((r for r in rows if float(r["cond_scale"]) in (1.5, 2.0)), None)
+    if best["cond_scale"] >= 8.0:
+        print(" -> WARNING: best separation is at cs >= 8, where over-guidance degrades the\n"
+              "    images (colour-channel saturation, 3-7x edge_mag, visible artifacts).\n"
+              "    Inspect the montages and edge_mag before using this as an operating point.")
+    elif best["rf_binary_acc"] >= 0.8:
         print(" -> conditioning IS expressible at higher CFG. Sample final fake data at this cond_scale.")
     elif best["rf_binary_acc"] <= 0.6:
         print(" -> flat across scales. The model did not encode grade. Enable aux_reg_loss and resume retraining.")
     else:
         print(" -> weak trend. Try even higher cond_scale (e.g. 8-10) or proceed to aux_reg_loss.")
+    if ref is not None:
+        print("    over-guidance guard: edge_mag(g{}) at best / at cs{:.1f} = {:.2f}x "
+              "(>2x means the pool is degrading)".format(
+                  g0, float(ref["cond_scale"]),
+                  float(best["edge_mag_g{}".format(g0)]) / max(float(ref["edge_mag_g{}".format(g0)]), 1e-6)))
     print("\n summary: {}/cond_scale_summary.csv".format(args.out_dir))
 
 
