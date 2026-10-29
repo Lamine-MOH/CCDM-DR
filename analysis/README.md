@@ -132,6 +132,21 @@ python analysis/sweep_cond_scale.py \
   `output/DRGrading_128/aux_reg_model/ckpt_resnet18_epoch_200.pth`, then
   resume with `--use_aux_reg_loss`) and bump `--sample_cond_scale` to 3-4.
 
+**Do not read "separation rises" as "raise cond_scale".** Past `cs ≈ 8` the
+separability is bought by destroying the images, and at 32-64 the pools are
+saturated noise while `rf_binary_acc` sits at 1.0. The usable band is `cs` 1.5-4;
+the 2026-10-29 extreme-scale sweep (`0 … 64`, g0/g4 montages, feature table,
+mechanism and a cheap over-guidance guard) is written up in
+**`docs/COND_SCALE_LIMITS.md`**.
+
+Notes on the script: it routes `sigma_data` through `load_sigma_data` (reads
+`results/edm_sigma_data.json`, falls back to the CLI constant with a warning),
+accepts more than two `--grades` (all listed pools are generated, the contrast is
+lowest-vs-highest grade), names the CSV columns after the real grade labels
+(`*_g4`, not `*_g1`), writes `n_per_grade`, and prints an `edge_mag` ratio versus
+`cs 1.5-2.0` with a warning when the best separation comes from the
+over-guidance regime.
+
 ### `merge_h5_by_grade.py` — per-grade blend of per-scale h5 files
 
 When different grades prefer different CFG strengths (per-class downstream
@@ -310,14 +325,12 @@ actually sit relative to the real data and to classical augmentation?** No
 classifier and no pretrained network is involved, so the projection describes
 the image content itself rather than a model's feature space.
 
-> **Findings (APTOS 128, 2026-10-27):** see
-> [`EMBEDDING_MAP_FINDINGS.md`](EMBEDDING_MAP_FINDINGS.md). Headline:
-> `cs1.5` is the most real-like pool and `cs4.0` the most segregated; synthetic
-> data is more grade-separable but less diverse per grade than real; coverage is
-> pool-dependent (`cs1.5` 92–99% of the real grade plane vs `cs4.0` 40–72%);
-> the `blendA_g3cs4` g3 switch trades local realism and coverage for
-> class-typicality; and the per-grade blends confound grade with generator
-> appearance.
+> **Findings (local-only):** the full tables and caveats are in the author's
+> local `docs/EMBEDDING_MAP_FINDINGS.md` (gitignored). Headline: `cs1.5` is the
+> most real-like pool, `cs4.0` the least; synthetic data is locally segregated
+> and less diverse per grade; the blends confound grade with generator
+> appearance. A native 128 px check reproduces the ordering; absolute energy
+> scales by ~1.64x, so compare within-resolution ratios.
 
 Each image is fundus-cropped (removes black-border/framing differences),
 padded to a square, resized to `48×48` RGB (default), flattened, and optionally
@@ -325,6 +338,10 @@ extended with model-free colour/texture statistics (`--extra_feats`). All
 sources are concatenated, PCA-compressed to 64 dims (fit once on the union),
 and projected to 2D with UMAP (default) and/or t-SNE. Because every source
 shares one embedding, their positions are directly comparable.
+
+A native 128 px check (`--pixel_size 128`, 2026-10-29) reproduces the
+kNN/nn/silhouette ordering; energy scales by ~1.64x, so only within-resolution
+ratios are comparable. See the local findings §8.
 
 ### Compared arms
 
@@ -473,3 +490,65 @@ python analysis/merge_h5_by_grade.py \
 ```
 
 This is the same per-grade recipe used by `run_matrix.sh` (g4 real-only).
+
+## `pca_grade_plane.py` — the PCA view of the embedding map
+
+`embedding_map.py` computes all distances in 64-d PCA space but never plots the
+PCA plane. This script fills that gap from the cached feature matrix (no h5
+re-read):
+
+```bash
+python analysis/pca_grade_plane.py \
+    --features experiments_outputs/embedding_map_rerun/embedding_features.npz \
+    --out_dir  experiments_outputs/embedding_map_rerun
+```
+
+It reproduces the canonical PCA (seed 111, 94.77 % variance), writes
+`pca_grade_plane.png` (real + aug + synthetic arms in PC2–PC3, coloured by
+grade), `pca_variance.png` (scree + between-grade variance share per PC),
+`pca_metrics.csv` and `pca_centroids.csv`. The key numbers: PC1 carries 37.5 %
+of variance but only $\eta^2=0.03$ of grade; PC2 carries 15.7 % and
+$\eta^2=0.64$. This is the grade-aware view recommended in the local findings
+document, §11.3.
+
+## `embedding_pair_global.py` — readable 1-vs-1 global panels
+
+The full `--pairs real` figures are 3×2 panels and become unreadable at slide
+scale. This script re-plots only the global panel from
+`embedding_projection.csv`:
+
+```bash
+python analysis/embedding_pair_global.py \
+    --projection experiments_outputs/embedding_map_rerun/embedding_projection.csv \
+    --sources cs1.5 cs4.0 --out experiments_outputs/embedding_map_rerun/umap_pair_global_cs.png \
+    --metrics experiments_outputs/embedding_map_metrics_2026-10-27/embedding_metrics.csv \
+    --pairwise experiments_outputs/embedding_map_metrics_2026-10-27/pairwise_metrics.csv
+```
+
+It annotates kNN-real, energy and silhouette from the metric CSVs. Use it for
+talks, not for measurement (the measurement stays in the CSVs).
+
+## `architecture_audit.py` — quantitative architecture analysis
+
+Answers three questions from the code and checkpoints rather than estimates:
+where the parameters go, what a forward pass costs, and whether the frozen
+conditioning nets are informative.
+
+```bash
+python analysis/architecture_audit.py \
+    --out_dir experiments_outputs/architecture_audit
+```
+
+Outputs `architecture_audit.json`, `architecture_params.csv`,
+`architecture_attention.csv`, `architecture_flops.json`,
+`conditioning_geometry.csv`, `y2h_cosine.png` and `y2cov_grade_maps.png`. It
+runs on CPU (no CUDA needed). Headline numbers at 128 px: 101,440,067 U-Net
+params; label path 3.21 %; net new vs the upstream concatenation 25,088 bias
+params; 147.8 GFLOPs per forward; full-matrix attention peak 1.87 GiB (0.94 GiB
+saved), which is the documented "~2 GiB spike".
+
+The `y2h` audit reports **two** gates: the ordinal-inversion gate (h2y
+reconstructs the grade to ≤0.022, PASS) and the old categorical-cosine gate
+(five distinct clusters, off-diagonal cosine <0.8, FAIL because the embeddings
+are nearly collinear). For an ordinal label the first is the meaningful one;
+do not report "E1 PASS" without naming the gate.
