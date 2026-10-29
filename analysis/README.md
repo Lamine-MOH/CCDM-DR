@@ -528,6 +528,21 @@ python analysis/embedding_pair_global.py \
 It annotates kNN-real, energy and silhouette from the metric CSVs. Use it for
 talks, not for measurement (the measurement stays in the CSVs).
 
+## `embedding_per_grade.py` — per-grade companion grid
+
+A 2×5 view for talks: top row real + cs1.5 + cs4.0, bottom row real + aug_train
++ aug_popular, one panel per ICDR grade:
+
+```bash
+python analysis/embedding_per_grade.py \
+    --projection experiments_outputs/embedding_map_rerun/embedding_projection.csv \
+    --out experiments_outputs/embedding_map_rerun/map_per_grade_pairs.png
+```
+
+It reads the existing UMAP projection; no metrics are recomputed. Use it to see
+where coverage differs by grade, not to measure coverage (that is the PCA-space
+table).
+
 ## `architecture_audit.py` — quantitative architecture analysis
 
 Answers three questions from the code and checkpoints rather than estimates:
