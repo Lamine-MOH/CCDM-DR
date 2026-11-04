@@ -13,6 +13,20 @@ Then PCA on the union of ALL sources, and a 2D projection of the PCA space
 with UMAP (default) and/or t-SNE.  All sources share one embedding, so the
 positions are directly comparable.
 
+Why PCA-64 before UMAP/t-SNE?  The raw feature is a ~7k-dimensional pixel
+vector.  In that space Euclidean distances concentrate (nearest and farthest
+neighbours become nearly equidistant), and the dominant variance is nuisance
+acquisition appearance (brightness / illumination / framing), not grade.  An
+intermediate PCA fit once on the union of all sources therefore (a) denoises
+the low-variance tail, (b) keeps the ~95% of variance that carries global
+structure, (c) makes kNN/UMAP/t-SNE tractable, and (d) guarantees every arm is
+projected through the same linear map.  `--proj_input raw` bypasses this step
+and feeds the raw feature matrix straight to the projector as a diagnostic:
+it is what the plots would look like without PCA denoising.  Note that
+`--method pca` already plots the top two raw principal components (the first
+two PCA-64 columns span the same subspace), so raw PCA is identical up to
+solver/sign.  Metrics always stay in the denoised PCA-64 space.
+
 Compared sources:
     real            real training h5 (per-grade capped)
     real_test       optional real test h5 (natural-variation reference)
@@ -29,7 +43,9 @@ Outputs (into --out_dir):
     {method}_pair_a_vs_b.png   1-vs-1 map: global panel + one panel per grade
     {method}_thumbnails.png    actual image thumbnails at their 2D coordinates
     embedding_projection.csv   x, y, source, split, grade, h5 index, method
-    embedding_metrics.csv      per source x grade, in PCA space:
+    (with --proj_input raw, every projection output above gains a _raw suffix
+     and the CSV is embedding_projection_raw.csv; metrics are unaffected)
+    embedding_metrics.csv      per source x grade, in PCA-64 space:
                                  nn_real_ratio   distance to nearest same-grade
                                                  real / median real-real NN dist
                                  knn_real_frac   fraction of 10 same-grade
@@ -563,7 +579,7 @@ def compute_metrics(z, meta, out_csv, seed):
         writer.writeheader()
         writer.writerows(rows)
 
-    print("\nEmbedding metrics (PCA space)")
+    print("\nEmbedding metrics (PCA-64 space)")
     print(f"{'source':>18} {'grade':>5} {'n':>6} {'nn/r':>7} {'knnR':>7} "
           f"{'energy':>8} {'sil':>7}")
     for r in rows:
@@ -627,7 +643,7 @@ def compute_pairwise_metrics(z, meta, pairs, out_csv, seed):
         writer.writeheader()
         writer.writerows(rows)
 
-    print("\nPairwise metrics (PCA space; B measured against A)")
+    print("\nPairwise metrics (PCA-64 space; B measured against A)")
     print(f"{'A':>16} {'B':>16} {'grade':>5} {'nA':>5} {'nB':>5} "
           f"{'nn/r':>7} {'knnA':>7} {'energy':>8}")
     for r in rows:
@@ -696,7 +712,7 @@ def _grade_legend(fig):
                frameon=False, fontsize=10)
 
 
-def plot_by_source(xy, meta, out_path, method):
+def plot_by_source(xy, meta, out_path, method, input_note=""):
     sources = list(dict.fromkeys(meta["source"].tolist()))
     real_m = meta["source"] == "real"
     lo, hi = _robust_limits(xy)
@@ -747,8 +763,9 @@ def plot_by_source(xy, meta, out_path, method):
         ax.set_ylabel(f"{method.upper()}-2", fontsize=8)
 
     _grade_legend(fig)
+    note = f" [{input_note}]" if input_note else ""
     fig.suptitle(
-        f"{method.upper()} of image-space features — colour = DR grade "
+        f"{method.upper()} of image-space features{note} — colour = DR grade "
         f"(n={len(xy)}; grey = real background in non-real panels)",
         fontsize=11,
     )
@@ -758,7 +775,7 @@ def plot_by_source(xy, meta, out_path, method):
     print(f"  wrote {out_path}")
 
 
-def plot_by_grade(xy, meta, out_path, method):
+def plot_by_grade(xy, meta, out_path, method, input_note=""):
     sources = list(dict.fromkeys(meta["source"].tolist()))
     palette = _source_palette(sources)
     lo, hi = _robust_limits(xy)
@@ -788,15 +805,16 @@ def plot_by_grade(xy, meta, out_path, method):
     axes[-1].axis("off")
     axes[-1].legend(handles=handles, loc="center", fontsize=9, frameon=False)
 
-    fig.suptitle(f"{method.upper()} — per-grade view of real vs augmented vs "
-                 f"synthetic", fontsize=11)
+    note = f" [{input_note}]" if input_note else ""
+    fig.suptitle(f"{method.upper()}{note} — per-grade view of real vs augmented "
+                 f"vs synthetic", fontsize=11)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     print(f"  wrote {out_path}")
 
 
-def plot_pair(xy, meta, out_path, method, a, b, palette):
+def plot_pair(xy, meta, out_path, method, a, b, palette, input_note=""):
     """One dedicated 1-vs-1 map: global panel + one panel per grade."""
     lo, hi = _robust_limits(xy)
     m_a = meta["source"] == a
@@ -840,8 +858,10 @@ def plot_pair(xy, meta, out_path, method, a, b, palette):
         ax.set_xlabel(f"{method.upper()}-1", fontsize=8)
         ax.set_ylabel(f"{method.upper()}-2", fontsize=8)
 
+    note = f" [{input_note}]" if input_note else ""
     fig.suptitle(
-        f"{method.upper()} — 1-vs-1 comparison: {_display(a)} vs {_display(b)}",
+        f"{method.upper()}{note} — 1-vs-1 comparison: {_display(a)} vs "
+        f"{_display(b)}",
         fontsize=11,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
@@ -850,7 +870,7 @@ def plot_pair(xy, meta, out_path, method, a, b, palette):
     print(f"  wrote {out_path}")
 
 
-def plot_thumbnails(xy, meta, thumbs, out_path, method, n_max, seed):
+def plot_thumbnails(xy, meta, thumbs, out_path, method, n_max, seed, input_note=""):
     sources = list(dict.fromkeys(meta["source"].tolist()))
     palette = _source_palette(sources)
     rng = np.random.default_rng(seed)
@@ -891,7 +911,8 @@ def plot_thumbnails(xy, meta, thumbs, out_path, method, n_max, seed):
     handles = [Line2D([0], [0], marker="s", ls="", color=palette[s],
                       markersize=7, label=_display(s)) for s in sources]
     ax.legend(handles=handles, loc="upper right", fontsize=8, frameon=True)
-    ax.set_title(f"Actual images at their {method.upper()} coordinates "
+    note = f" [{input_note}]" if input_note else ""
+    ax.set_title(f"Actual images at their {method.upper()} coordinates{note} "
                  f"(n={len(chosen)} sampled)", fontsize=11)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
@@ -971,9 +992,16 @@ def parse_args(argv=None):
                         "pixel block (only used with --extra_feats)")
     p.add_argument("--no_fundus_crop", action="store_true",
                    help="do not crop to the fundus bounding box")
-    p.add_argument("--pca_components", type=int, default=64)
+    p.add_argument("--pca_components", type=int, default=64,
+                   help="PCA dimensions used for the default projection input "
+                        "and for all distribution metrics")
+    p.add_argument("--proj_input", default="pca", choices=["pca", "raw"],
+                   help="input to the 2D projector: 'pca' = the PCA-64 space "
+                        "(current default); 'raw' = the full image-feature "
+                        "matrix (diagnostic, bypasses PCA denoising)")
     p.add_argument("--method", default="umap",
-                   choices=["umap", "tsne", "both", "pca"])
+                   choices=["umap", "tsne", "both", "pca", "all"],
+                   help="'all' runs pca + umap + tsne")
     p.add_argument("--umap_neighbors", type=int, default=30)
     p.add_argument("--umap_min_dist", type=float, default=0.1)
     p.add_argument("--tsne_perplexity", type=float, default=30.0)
@@ -1075,6 +1103,7 @@ def main(argv=None):
         "extra_feats_weight": args.extra_feats_weight,
         "fundus_crop": not args.no_fundus_crop,
         "pca_components": args.pca_components,
+        "proj_input": args.proj_input,
         "method": args.method,
         "umap_neighbors": args.umap_neighbors,
         "umap_min_dist": args.umap_min_dist,
@@ -1100,10 +1129,11 @@ def main(argv=None):
                     f"cached={old_cfg.get(key)!r}, now={cfg.get(key)!r}). "
                     "Re-run without --reuse_features."
                 )
-        for key in ("aug", "aug_reps", "max_per_grade", "seed"):
-            if old_cfg.get(key) != cfg.get(key):
+        for key in ("aug", "aug_reps", "max_per_grade", "seed", "proj_input"):
+            old_val = old_cfg.get(key, cfg.get(key))
+            if old_val != cfg.get(key):
                 print(f"[cache] WARNING: config differs for {key!r}: "
-                      f"cached={old_cfg.get(key)!r} now={cfg.get(key)!r}")
+                      f"cached={old_val!r} now={cfg.get(key)!r}")
         # features / meta / thumbs come from the cache below; no h5 is read
         blocks = []
     else:
@@ -1216,25 +1246,42 @@ def main(argv=None):
     print(f"[pca] explained variance (top {k}): {evr:.3f}")
 
     # ---- projections --------------------------------------------------------
-    methods = []
-    if args.method == "both":
+    if args.method == "all":
+        methods = ["pca", "umap", "tsne"]
+    elif args.method == "both":
         methods = ["umap", "tsne"]
     else:
         methods = [args.method]
+
+    raw = args.proj_input == "raw"
+    raw_tag = "_raw" if raw else ""
+    proj_feats = feats if raw else z
+    input_note = f"raw {feats.shape[1]}-d input" if raw else "PCA-64 input"
+    if raw:
+        print(f"[project] raw input: {feats.shape[1]}-d image features "
+              f"(PCA-64 bypassed; UMAP/t-SNE will be slower)")
 
     projections = {}
     for method in methods:
         print(f"[project] {method}")
         if method == "umap":
-            xy = run_umap(z, args)
+            xy = run_umap(proj_feats, args)
         elif method == "tsne":
-            xy = run_tsne(z, args)
+            xy = run_tsne(proj_feats, args)
+        elif raw:
+            p2 = PCA(n_components=2, svd_solver="randomized",
+                     random_state=args.seed)
+            xy = p2.fit_transform(feats)
+            print(f"  raw PCA-2 explained variance: "
+                  f"{p2.explained_variance_ratio_.sum():.3f} "
+                  f"(same subspace as PCA-64 first two columns, up to sign)")
         else:
             xy = z[:, :2].copy()
         projections[method] = np.asarray(xy, dtype=np.float32)
 
     # ---- projection CSV -----------------------------------------------------
-    proj_csv = os.path.join(args.out_dir, "embedding_projection.csv")
+    proj_csv = os.path.join(
+        args.out_dir, f"embedding_projection{raw_tag}.csv")
     with open(proj_csv, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["method", "source", "split", "grade", "index", "x", "y"])
@@ -1264,29 +1311,35 @@ def main(argv=None):
     # ---- figures ------------------------------------------------------------
     palette = _source_palette(sources)
     for method, xy in projections.items():
-        print(f"[plot] {method}")
+        print(f"[plot] {method}{raw_tag}")
         plot_by_source(
             xy, meta,
-            os.path.join(args.out_dir, f"{method}_by_source.png"), method,
+            os.path.join(args.out_dir,
+                         f"{method}{raw_tag}_by_source.png"),
+            method, input_note,
         )
         plot_by_grade(
             xy, meta,
-            os.path.join(args.out_dir, f"{method}_by_grade.png"), method,
+            os.path.join(args.out_dir,
+                         f"{method}{raw_tag}_by_grade.png"),
+            method, input_note,
         )
         for a, b in pairs:
             plot_pair(
                 xy, meta,
                 os.path.join(
                     args.out_dir,
-                    f"{method}_pair_{_safe_name(a)}_vs_{_safe_name(b)}.png",
+                    f"{method}{raw_tag}_pair_{_safe_name(a)}_vs_"
+                    f"{_safe_name(b)}.png",
                 ),
-                method, a, b, palette,
+                method, a, b, palette, input_note,
             )
         if not args.no_thumbnails and len(thumbs):
             plot_thumbnails(
                 xy, meta, thumbs,
-                os.path.join(args.out_dir, f"{method}_thumbnails.png"),
-                method, args.thumbnails_max, args.seed,
+                os.path.join(args.out_dir,
+                             f"{method}{raw_tag}_thumbnails.png"),
+                method, args.thumbnails_max, args.seed, input_note,
             )
 
     # ---- config / counts ----------------------------------------------------
@@ -1302,9 +1355,12 @@ def main(argv=None):
     out_cfg = dict(cfg)
     out_cfg["counts"] = counts
     out_cfg["pca_explained_variance"] = evr
-    with open(os.path.join(args.out_dir, "run_config.json"), "w") as f:
+    out_cfg["projection_input_dim"] = int(proj_feats.shape[1])
+    out_cfg["metrics_space"] = "pca64"
+    config_name = f"run_config{raw_tag}.json"
+    with open(os.path.join(args.out_dir, config_name), "w") as f:
         json.dump(out_cfg, f, indent=2)
-    print(f"  wrote {os.path.join(args.out_dir, 'run_config.json')}")
+    print(f"  wrote {os.path.join(args.out_dir, config_name)}")
 
     print(f"\nAll outputs in {os.path.abspath(args.out_dir)}  "
           f"({time.time() - t_start:.1f}s)")

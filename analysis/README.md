@@ -339,6 +339,39 @@ sources are concatenated, PCA-compressed to 64 dims (fit once on the union),
 and projected to 2D with UMAP (default) and/or t-SNE. Because every source
 shares one embedding, their positions are directly comparable.
 
+### Why PCA-64 before UMAP/t-SNE?
+
+The raw representation is a ~7,000-dimensional pixel vector (6,912 dims at
+48 px, more with `--extra_feats`). Feeding that straight to a neighbour
+embedding is possible (`--proj_input raw`) but statistically fragile:
+
+1. **Distance concentration.** In high-dimensional Euclidean space the ratio
+   between nearest- and farthest-neighbour distances tends to 1, so kNN graphs,
+   UMAP edges and energy distances are dominated by many small independent
+   pixel differences rather than the few directions that carry grade/appearance
+   structure.
+2. **Nuisance variance dominates.** The largest pixel-space directions are
+   global brightness, illumination and framing — the existing PCA view has
+   PC1 = 37.5 % of variance but grade η² = 0.03. Raw UMAP/t-SNE would spend
+   their budget separating acquisition conditions, not retinal content.
+3. **Noise suppression.** PCA-64 retains 94.77 % of total variance while
+   discarding the long, low-variance tail (compression/sensor noise), which
+   gives the neighbourhood graph a cleaner input.
+4. **Cost.** Neighbour searches on ~7k dims are much slower; PCA-64 cuts the
+   dimension ~100× with negligible loss of global structure.
+5. **Shared embedding.** A single PCA fit on the union of all sources projects
+   every arm through the same linear map, so positions are comparable.
+   Per-source or per-method preprocessing would confound data differences with
+   preprocessing differences.
+6. **Standard practice.** Reducing image-pixel vectors to ~50–100 PCs before
+   t-SNE/UMAP is the conventional preprocessing step.
+
+`--method pca` already plots the top two principal components of the raw
+features (the first two PCA-64 columns span the same subspace), so raw PCA is
+identical up to solver/sign. `--proj_input raw` is a diagnostic/robustness
+check: if the ordering of pools or the grade-coverage conclusion changes
+without PCA, it was driven by the projection rather than the data.
+
 A native 128 px check (`--pixel_size 128`, 2026-10-29) reproduces the
 kNN/nn/silhouette ordering; energy scales by ~1.64x, so only within-resolution
 ratios are comparable. See the local findings §8.
@@ -366,7 +399,8 @@ default (`--aug_reps N` for more).
 pip install umap-learn
 ```
 
-`--method tsne` and `--method pca` work without it.
+`--method tsne` and `--method pca` work without it (including with
+`--proj_input raw`).
 
 ### Commands (Aptos 128, canonical pools)
 
@@ -417,6 +451,35 @@ Higher-resolution data: pass the 256 h5 paths and keep `--pixel_size 48` (the
 thumbnail size is independent of the source resolution). For a first quick
 look use `--method pca --no_thumbnails --max_per_grade 200`.
 
+### Raw-input projections (diagnostic)
+
+By default the projector runs on the PCA-64 space. To see what the plots look
+like **without** the intermediate PCA, feed the full image-feature matrix
+directly to the projector:
+
+```bash
+python analysis/embedding_map.py ... \
+    --proj_input raw --method all \
+    --out_dir experiments_outputs/embedding_map_raw
+```
+
+- `--proj_input raw` affects **only the 2D projections and
+  `embedding_projection_raw.csv`**. The distribution metrics
+  (`embedding_metrics.csv`, `pairwise_metrics.csv`) stay in PCA-64, so they
+  remain comparable to every existing result.
+- Projection outputs gain a `_raw` suffix (`umap_raw_by_source.png`,
+  `tsne_raw_by_grade.png`, `..._raw_pair_*.png`, `..._raw_thumbnails.png`) and
+  the config is written to `run_config_raw.json`, so both modes can share an
+  output directory without clobbering each other.
+- `--method all` runs PCA, UMAP and t-SNE in one invocation (PCA is the
+  `--proj_input` PCA plane; for `raw` it is an explicit PCA-2 of the raw
+  features, which spans the same subspace as the first two PCA-64 columns).
+- Raw UMAP/t-SNE are substantially slower on ~7k dims. For a quick check use
+  `--max_per_grade` or a smaller `--pixel_size`; UMAP still requires
+  `umap-learn`, while `--method tsne` / `--method pca` do not.
+- `--reuse_features` is compatible: the feature cache is unchanged; only the
+  projection input changes.
+
 ### Outputs (`--out_dir`)
 
 | file | content |
@@ -432,6 +495,9 @@ look use `--method pca --no_thumbnails --max_per_grade 200`.
 | `run_config.json` | parameters, per-source/per-grade counts, PCA explained variance |
 
 `tsne_*` / `pca_*` figures are written instead of `umap_*` when requested.
+With `--proj_input raw`, every projection output above gains a `_raw` suffix
+(e.g. `umap_raw_by_source.png`, `embedding_projection_raw.csv`) and the config
+becomes `run_config_raw.json`; metrics keep their canonical names.
 
 ### Reading the metrics (computed in 64-d PCA space, not in 2D)
 
@@ -467,7 +533,12 @@ region as A within each grade, rather than only in the global projection.
   mostly answer "do these look like the same acquisition?", while the per-grade
   panels and the PCA-space metrics answer "does this cover the class?".
 - UMAP and t-SNE distort distances; never read absolute inter-cluster distances
-  off the 2D plots. Use the CSV metrics for distances.
+  off the 2D plots. Use the CSV metrics for distances. This applies to the
+  `--proj_input raw` diagnostic too.
+- Raw-input plots are a control, not a replacement: they show what the map
+  looks like when high-dimensional distance concentration and nuisance
+  variance are not removed by PCA. Keep the PCA-64 results as the primary
+  evidence and the PCA-space metrics for all numbers.
 - `--max_per_grade` balances the visual comparison; without it, grade 0 would
   dominate. The counts actually plotted are in `run_config.json` and the panel
   titles.
