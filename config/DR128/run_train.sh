@@ -87,6 +87,12 @@ SIGMA=-1.0
 KAPPA=-1.0
 TYPE="hard"
 
+# Console/tee log lives in the run folder, not the repo root.  Create it
+# before the pipeline so tee can open the file even if main.py fails early.
+RUN_OUT_DIR="${ROOT_PATH%/}/output/${DATA_NAME}_${IMG_SIZE}/${SETTING}"
+mkdir -p "$RUN_OUT_DIR"
+CONSOLE_LOG="${RUN_OUT_DIR}/output_${DATA_NAME}_${IMG_SIZE}_${SETTING}.txt"
+
 python main.py \
     --setting_name $SETTING \
     --root_path $ROOT_PATH --data_name $DATA_NAME --data_path $DATA_PATH \
@@ -113,7 +119,7 @@ python main.py \
     --sample_cond_scale 1.5 --sample_cond_rescaled_phi 0.7 \
     --nfake_per_label 1000 --samp_batch_size $SAMP_BATCH_SIZE \
     --dump_fake_data $SKIP_FLAG \
-    2>&1 | tee output_${DATA_NAME}_${IMG_SIZE}_${SETTING}.txt
+    2>&1 | tee "$CONSOLE_LOG"
 
     # --do_eval requires dataset-specific eval checkpoints you train yourself first
     # (see evaluation/evaluator.py comments + the experiment guide, Phase 3).
