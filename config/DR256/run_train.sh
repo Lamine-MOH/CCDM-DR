@@ -30,6 +30,9 @@ SKIP_FINAL_SAMPLING=0
 LR_SCHEDULE=constant
 LR_WARMUP=0
 LR_MIN_FRAC=0.0
+TRAIN_FRAC=1.0
+TRAIN_SUBSET_SEED=111
+TRAIN_SUBSET_SCOPE=diffusion
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -42,6 +45,9 @@ while [[ $# -gt 0 ]]; do
         --lr_schedule)        LR_SCHEDULE="$2"; shift 2 ;;
         --lr_warmup_steps)    LR_WARMUP="$2"; shift 2 ;;
         --lr_min_lr_frac)     LR_MIN_FRAC="$2"; shift 2 ;;
+        --train_frac)         TRAIN_FRAC="$2"; shift 2 ;;
+        --train_subset_seed)  TRAIN_SUBSET_SEED="$2"; shift 2 ;;
+        --train_subset_scope) TRAIN_SUBSET_SCOPE="$2"; shift 2 ;;
         --skip_final_sampling) SKIP_FINAL_SAMPLING=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -72,6 +78,7 @@ python main.py \
     --epoch_cnn_embed 200 --epoch_cnn_embed_y2cov 200 --epoch_net_y2h 500 --epoch_net_y2cov 500 \
     --batch_size_embed 256 --batch_size_embed_y2cov 256 \
     --num_img_per_label_after_replica 1000 \
+    --train_frac $TRAIN_FRAC --train_subset_seed $TRAIN_SUBSET_SEED --train_subset_scope $TRAIN_SUBSET_SCOPE \
     --train_num_steps $NUM_STEPS --resume_step $RESUME_STEP --train_lr 1e-5 \
     --lr_schedule $LR_SCHEDULE --lr_warmup_steps $LR_WARMUP --lr_min_lr_frac $LR_MIN_FRAC \
     --train_batch_size $BATCH_SIZE --gradient_accumulate_every $GRAD_ACCUM \

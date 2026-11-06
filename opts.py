@@ -21,6 +21,17 @@ def parse_opts():
     parser.add_argument('--image_size', type=int, default=64, metavar='N')
     parser.add_argument('--max_num_img_per_label', type=int, default=2**20, metavar='N')
     parser.add_argument('--num_img_per_label_after_replica', type=int, default=0, metavar='N')
+    parser.add_argument('--train_frac', type=float, default=1.0,
+                        help='fraction of the training set to use, stratified by label. '
+                             '1.0 keeps everything (default). The subset is taken after the '
+                             'per-label cap / minority replication, so diffusion runs '
+                             '(replication=0) see the real grade distribution.')
+    parser.add_argument('--train_subset_seed', type=int, default=111,
+                        help='RNG seed for the stratified train subset')
+    parser.add_argument('--train_subset_scope', type=str, default='diffusion',
+                        choices=['diffusion', 'all'],
+                        help='diffusion: subset only the diffusion trainer\'s real set '
+                             '(embeddings stay full); all: also subset the embedding dataset')
 
     ''' Model Config '''
     ## UNet configs

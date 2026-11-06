@@ -92,19 +92,40 @@ os.makedirs(path_to_fake_data, exist_ok=True)
 
 # DRGrading: minority replication (--num_img_per_label_after_replica) feeds the
 # label-embedding nets only; the diffusion trainer's real set stays unreplicated.
-dataset = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=args.num_img_per_label_after_replica if args.data_name != "DRGrading" else 0)
+dataset = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=args.num_img_per_label_after_replica if args.data_name != "DRGrading" else 0, train_frac=args.train_frac, train_subset_seed=args.train_subset_seed)
     
 train_images, train_labels, train_labels_norm = dataset.load_train_data()
 num_classes = dataset.num_classes
 
-unique_labels_norm = np.sort(np.array(list(set(train_labels_norm))))
+if args.use_ada_vic and len(train_labels) < args.min_n_per_vic:
+    print("\n WARNING: the training subset has {} samples, fewer than "
+          "--min_n_per_vic {}; the vicinity will use all available labels.".format(
+              len(train_labels), args.min_n_per_vic))
+
+# Label statistics (kappa, kernel_sigma, visual grid) are computed on the full
+# training labels so changing --train_frac does not silently change the vicinity
+# geometry or the visualisation grid.
+stats_labels_norm = train_labels_norm
+if getattr(dataset, "train_labels_before_subset", None) is not None:
+    stats_labels_norm = dataset.fn_normalize_labels(dataset.train_labels_before_subset)
+
+unique_labels_norm = np.sort(np.array(list(set(stats_labels_norm))))
+
+# Persist the exact subset provenance (counts, seed, and indices when active).
+if getattr(dataset, "train_subset_info", None) is not None:
+    subset_info = dict(dataset.train_subset_info)
+    subset_info["scope"] = args.train_subset_scope
+    with open(os.path.join(save_results_folder, "train_subset.json"), "w") as f:
+        json.dump(subset_info, f, indent=2)
+    print("\n Saved train-subset metadata to {}".format(
+        os.path.join(save_results_folder, "train_subset.json")))
 
 if args.kernel_sigma<0:
-    std_label = np.std(train_labels_norm)
-    args.kernel_sigma = 1.06*std_label*(len(train_labels_norm))**(-1/5)
+    std_label = np.std(stats_labels_norm)
+    args.kernel_sigma = 1.06*std_label*(len(stats_labels_norm))**(-1/5)
 
     print("\n Use rule-of-thumb formula to compute kernel_sigma >>>")
-    print("\n The std of {} labels is {:.4f} so the kernel sigma is {:.4f}".format(len(train_labels_norm), std_label, args.kernel_sigma))
+    print("\n The std of {} labels is {:.4f} so the kernel sigma is {:.4f}".format(len(stats_labels_norm), std_label, args.kernel_sigma))
 ##end if
 
 if args.kappa<0:
@@ -278,14 +299,21 @@ print("\n Saved sigma_data metadata to {}".format(sigma_meta_path))
 '''                             label embedding method                              '''
 #######################################################################################
 
+embed_train_frac = args.train_frac if args.train_subset_scope == "all" else 1.0
+embed_subset_kwargs = dict(train_frac=embed_train_frac, train_subset_seed=args.train_subset_seed)
+if args.train_subset_scope == "all" and args.train_frac < 1.0:
+    print("\n WARNING: --train_subset_scope all subsets the embedding dataset, but "
+          "existing model_y2h/model_y2cov checkpoints are reused if present; "
+          "remove them to force retraining on the subset.")
+
 if args.data_name == "UTKFace":
-    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=200)
+    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=200, **embed_subset_kwargs)
 elif args.data_name == "DRGrading":
-    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=args.num_img_per_label_after_replica)
+    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=args.num_img_per_label_after_replica, **embed_subset_kwargs)
 elif args.data_name in ["Cell200", "RC-49"]:
-    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=0)
+    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=args.max_num_img_per_label, num_img_per_label_after_replica=0, **embed_subset_kwargs)
 else:
-    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=0)
+    dataset_embed = LoadDataSet(data_name=args.data_name, data_path=args.data_path, min_label=args.min_label, max_label=args.max_label, img_size=args.image_size, max_num_img_per_label=1e30, num_img_per_label_after_replica=0, **embed_subset_kwargs)
 
 label_embedding = LabelEmbed(
                     dataset = dataset_embed, 
@@ -313,6 +341,15 @@ if args.use_y2cov:
     fn_y2cov = label_embedding.fn_y2cov
 else:
     fn_y2cov = None
+
+# Scope "all": record the embedding nets' subset alongside the diffusion one.
+if args.train_subset_scope == "all" and getattr(dataset_embed, "train_subset_info", None) is not None:
+    subset_path = os.path.join(save_results_folder, "train_subset.json")
+    with open(subset_path) as f:
+        subset_info = json.load(f)
+    subset_info["embedding"] = dataset_embed.train_subset_info
+    with open(subset_path, "w") as f:
+        json.dump(subset_info, f, indent=2)
 
 #######################################################################################
 '''                             Diffusion  training                                 '''
@@ -390,8 +427,8 @@ if args.image_size>128:
 else:
     n_row=10
 n_col = n_row
-start_label = np.quantile(train_labels_norm, 0.05)
-end_label = np.quantile(train_labels_norm, 0.95)
+start_label = np.quantile(stats_labels_norm, 0.05)
+end_label = np.quantile(stats_labels_norm, 0.95)
 selected_labels = np.linspace(start_label, end_label, num=n_row)
 y_visual = np.zeros(n_row*n_col)
 for i in range(n_row):

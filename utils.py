@@ -51,6 +51,40 @@ def num_to_groups(num, divisor):
         arr.append(remainder)
     return arr
 
+def stratified_subset_indices(labels, frac, seed=111, min_per_label=1):
+    '''Deterministic, label-stratified subset indices.
+
+    Each label contributes round(n_label * frac) samples (clamped to
+    [min_per_label, n_label]); the selected indices are then shuffled.
+    Used by LoadDataSet to train on only part of the training split.
+    '''
+    labels = np.asarray(labels)
+    if not (0.0 < frac <= 1.0):
+        raise ValueError("frac must be in (0, 1], got {}".format(frac))
+
+    n_total = len(labels)
+    if n_total == 0:
+        return np.empty(0, dtype=int)
+    if frac == 1.0:
+        return np.arange(n_total, dtype=int)
+
+    rng = np.random.default_rng(seed)
+    keep = []
+    for lbl in np.unique(labels):
+        idx = np.flatnonzero(labels == lbl)
+        n_take = int(round(len(idx) * frac))
+        n_take = max(min_per_label, n_take)
+        n_take = min(n_take, len(idx))
+        if n_take < min_per_label:
+            raise ValueError(
+                "label {} has only {} sample(s), fewer than min_per_label={}".format(
+                    lbl, len(idx), min_per_label))
+        keep.append(rng.choice(idx, size=n_take, replace=False))
+
+    keep = np.concatenate(keep)
+    rng.shuffle(keep)
+    return keep.astype(int)
+
 def convert_image_to_fn(img_type, image):
     if image.mode != img_type:
         return image.convert(img_type)

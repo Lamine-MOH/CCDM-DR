@@ -7,8 +7,10 @@ import copy
 import torch
 from tqdm import tqdm, trange
 
+from utils import stratified_subset_indices
+
 class LoadDataSet:
-    def __init__(self, data_name, data_path, min_label, max_label, img_size=64, max_num_img_per_label=1e30, num_img_per_label_after_replica=0, imbalance_type="unimodal"):
+    def __init__(self, data_name, data_path, min_label, max_label, img_size=64, max_num_img_per_label=1e30, num_img_per_label_after_replica=0, imbalance_type="unimodal", train_frac=1.0, train_subset_seed=111):
         """
         data_name: the name of the dataset; must be one of ['RC-49', 'Cell200', 'UTKFace', 'SteeringAngle', 'DRGrading']
         data_path: the path to the h5 file
@@ -18,6 +20,9 @@ class LoadDataSet:
         max_num_img_per_label: the maximum number of images for each distinct label that will be used for training
         num_img_per_label_after_replica: the number of images for each distinct label that will be used for training
         imbalance_type: imbalance type for RC-49
+        train_frac: fraction of the (post-replication) training set to keep; stratified by label.
+                    1.0 keeps everything (default). Applied in load_train_data().
+        train_subset_seed: RNG seed for the stratified subset.
         """
         
         self.data_name = data_name
@@ -28,6 +33,14 @@ class LoadDataSet:
         self.max_num_img_per_label = max_num_img_per_label
         self.num_img_per_label_after_replica = num_img_per_label_after_replica
         self.imbalance_type = imbalance_type
+        if not (0.0 < train_frac <= 1.0):
+            raise ValueError("train_frac must be in (0, 1], got {}".format(train_frac))
+        self.train_frac = float(train_frac)
+        self.train_subset_seed = int(train_subset_seed)
+        self.train_subset_info = None
+        # Raw labels before subsetting (after the per-label cap / replication).
+        # main.py uses these for label statistics that should not depend on the fraction.
+        self.train_labels_before_subset = None
         
         ## load the entire dataset from h5 file
         with h5py.File(self.data_path+'/{}_{}x{}_train.h5'.format(self.data_name, self.img_size, self.img_size), 'r') as hf:
@@ -265,7 +278,45 @@ class LoadDataSet:
         
         else:
             raise ValueError("Not Supported Dataset!")
-        
+
+        # Keep the pre-subset labels for main.py's label statistics (kappa,
+        # kernel_sigma, visual grid).  Subsetting happens after the branch
+        # above, i.e. after the per-label cap and any minority replication.
+        self.train_labels_before_subset = labels.astype(float, copy=True)
+        full_labels = labels
+
+        if self.train_frac < 1.0:
+            subset_idx = stratified_subset_indices(
+                labels, self.train_frac, self.train_subset_seed)
+            images = images[subset_idx]
+            labels = labels[subset_idx]
+        else:
+            subset_idx = np.arange(len(labels), dtype=int)
+
+        before_labels, before_counts = np.unique(full_labels, return_counts=True)
+        after_labels, after_counts = np.unique(labels, return_counts=True)
+        after_count_map = {float(lbl): int(cnt) for lbl, cnt in zip(after_labels, after_counts)}
+        before_count_map = {float(lbl): int(cnt) for lbl, cnt in zip(before_labels, before_counts)}
+
+        print("\n Train subset: frac={:.3f}, seed={} (label-stratified, post-replication)".format(
+            self.train_frac, self.train_subset_seed))
+        print("   label | before | after")
+        for lbl in before_labels:
+            print("   {:>5g} | {:>6d} | {:>5d}".format(
+                float(lbl), before_count_map[float(lbl)], after_count_map.get(float(lbl), 0)))
+
+        self.train_subset_info = {
+            "train_frac": self.train_frac,
+            "train_subset_seed": self.train_subset_seed,
+            "applied_after_replication": True,
+            "total_before": int(len(full_labels)),
+            "total_after": int(len(labels)),
+            "before_counts": {format(float(k), "g"): v for k, v in before_count_map.items()},
+            "after_counts": {format(float(k), "g"): v for k, v in after_count_map.items()},
+        }
+        if self.train_frac < 1.0:
+            self.train_subset_info["indices"] = [int(i) for i in subset_idx]
+
         assert len(labels)==len(images)
         
         print("\n The training set's dimension: {}x{}x{}x{}".format(images.shape[0], images.shape[1], images.shape[2], images.shape[3]))
