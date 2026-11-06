@@ -36,6 +36,9 @@ def parse_opts():
     ''' Model Config '''
     ## UNet configs
     parser.add_argument('--model_config', type=str)
+    parser.add_argument('--cond_drop_prob', type=float, default=None,
+                        help='override the model-config cond_drop_prob (label dropout for CFG). '
+                             'Default None keeps the YAML value.')
     
     ## EDM configs
     parser.add_argument('--edm_sigma_min', type=float, default=0.002) # min noise level
@@ -52,12 +55,23 @@ def parse_opts():
     
     ''' Training '''   
     ## Diffusion model
-    parser.add_argument('--train_num_steps', type=int, default=10, metavar='N')
+    parser.add_argument('--train_num_steps', type=int, default=10, metavar='N',
+                        help='total scheduler horizon (the LR schedule is anchored to this)')
+    parser.add_argument('--stop_at_step', type=int, default=0, metavar='N',
+                        help='stop at this global step while keeping --train_num_steps as the '
+                             'scheduler total (0 = train to --train_num_steps). Useful for '
+                             'phased cosine runs: use the same total in every phase.')
     parser.add_argument('--resume_step', type=int, default=0, metavar='N')
     parser.add_argument('--train_batch_size', type=int, default=16, metavar='N')
     parser.add_argument('--train_lr', type=float, default=1e-4, help='learning rate')
     parser.add_argument('--train_amp', action='store_true', default=False)
-    parser.add_argument('--train_mixed_precision', type=str, default='fp16')
+    parser.add_argument('--train_mixed_precision', type=str, default='fp16',
+                        choices=['no', 'fp16', 'bf16', 'auto'],
+                        help='AMP precision. auto = bf16 on Ampere+ (compute >= 8.0), fp16 otherwise.')
+    parser.add_argument('--dr_aug', type=str, default='none',
+                        choices=['none', 'hflip', 'hvflip', 'rot90', 'all'],
+                        help='training-time augmentation for DRGrading: none | hflip | '
+                             'hvflip (h+v) | rot90 | all (h+v+rot90)')
     parser.add_argument('--gradient_accumulate_every', type=int, default=1, metavar='N')
     parser.add_argument('--sample_every', type=int, default=1000, metavar='N')
     parser.add_argument('--save_every', type=int, default=10000, metavar='N')

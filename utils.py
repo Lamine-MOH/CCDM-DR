@@ -252,7 +252,9 @@ def random_rotate_90_degrees(image):
         return np.rot90(image, k=3, axes=(1, 2))
  
 def random_rotate(images):
-    return np.concatenate([random_rotate_90_degrees(image) for image in images], axis=0)
+    # stack, not concatenate: each item is (C, H, W), so concatenating along
+    # axis 0 would fold the channel dimension into the batch dimension.
+    return np.stack([random_rotate_90_degrees(image) for image in images], axis=0)
 
 
 ## compute variance for large scale array

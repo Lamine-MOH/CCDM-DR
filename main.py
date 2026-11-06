@@ -47,6 +47,22 @@ torch.backends.cudnn.deterministic = True
 cudnn.benchmark = False
 np.random.seed(args.seed)
 
+# AMP precision: resolve "auto" and validate bf16 support before training.
+if args.train_mixed_precision == "auto":
+    if not args.train_amp:
+        args.train_mixed_precision = "no"
+    elif torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
+        args.train_mixed_precision = "bf16"
+    else:
+        args.train_mixed_precision = "fp16"
+    print("\n AMP precision auto-selected: {}".format(args.train_mixed_precision))
+elif args.train_mixed_precision == "bf16" and args.train_amp:
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability()[0] < 8:
+        raise ValueError(
+            "--train_mixed_precision bf16 requires an Ampere+ GPU "
+            "(compute capability >= 8.0); use fp16 or auto.")
+    print("\n AMP precision: bf16")
+
 if args.torch_model_path!="None":
     os.environ['TORCH_HOME']=args.torch_model_path
 
@@ -60,6 +76,12 @@ if "label_dim" in model_config.get("model", {}):
     assert model_config["model"]["label_dim"] == args.dim_embed, \
         "model_config['model']['label_dim'] {} != --dim_embed {}".format(
             model_config["model"]["label_dim"], args.dim_embed)
+
+if args.cond_drop_prob is not None:
+    if not (0.0 <= args.cond_drop_prob < 1.0):
+        raise ValueError("--cond_drop_prob must be in [0, 1), got {}".format(args.cond_drop_prob))
+    model_config["model"]["cond_drop_prob"] = float(args.cond_drop_prob)
+    print("\n Overriding cond_drop_prob: {}".format(model_config["model"]["cond_drop_prob"]))
 
 #######################################################################################
 '''                                Output folders                                  '''
@@ -160,6 +182,7 @@ def _check_label_type(y):
         raise TypeError("labels `y` must be a scalar or a torch.Tensor.")
 
 if args.edm_sigma_data_type == "default":  # default value for sigma_data
+    print("\n EDM sigma_data: default={}".format(float(args.edm_sigma_data_default)))
 
     def fn_y2sigma_data(y):
         kind = _check_label_type(y)
@@ -174,6 +197,7 @@ if args.edm_sigma_data_type == "default":  # default value for sigma_data
 
 elif args.edm_sigma_data_type == "global":  # global data standard deviation
     sigma_data = float(cal_std_dask(train_images))
+    print("\n EDM sigma_data: global={:.6f} (EDM default 0.5)".format(sigma_data))
 
     def fn_y2sigma_data(y):
         kind = _check_label_type(y)
@@ -198,6 +222,9 @@ elif args.edm_sigma_data_type == "local":  # y-dependent data standard deviation
         sigma_unique.append(per_image_std)
     sigma_unique = np.array(sigma_unique, dtype=float)
     y_unique_np = np.asarray(unique_labels_norm, dtype=float)
+    print("\n EDM sigma_data: local per-grade (EDM default 0.5)")
+    for _lbl, _sd in zip(y_unique_np, sigma_unique):
+        print("   grade {:>4g}: {:.6f}".format(float(_lbl) * args.max_label, _sd))
 
     def fn_y2sigma_data(y, y_unique=y_unique_np, sigma_unique=sigma_unique, shape=None):
         """
@@ -465,6 +492,7 @@ trainer = Trainer(
         gradient_accumulate_every = args.gradient_accumulate_every,
         train_lr = args.train_lr,
         train_num_steps = args.train_num_steps,
+        stop_at_step = args.stop_at_step,
         ema_update_after_step = args.ema_update_after_step,
         ema_update_every = args.ema_update_every,
         ema_decay = args.ema_decay,
@@ -482,6 +510,7 @@ trainer = Trainer(
         results_folder = save_results_folder,
         amp = args.train_amp,
         mixed_precision_type = args.train_mixed_precision,
+        dr_aug = args.dr_aug,
         max_grad_norm = 1.,
     )
     

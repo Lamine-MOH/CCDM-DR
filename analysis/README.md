@@ -614,6 +614,18 @@ It reads the existing UMAP projection; no metrics are recomputed. Use it to see
 where coverage differs by grade, not to measure coverage (that is the PCA-space
 table).
 
+## `measure_sigma_data.py` — EDM `sigma_data` measurement
+
+No training required. Reports the normalized-pixel global std and per-grade
+stds, matching the `global` / `local` schemes in `main.py`; use it to choose
+`--edm_sigma_data_type` before a calibrated retrain.
+
+```bash
+python analysis/measure_sigma_data.py \
+    --h5 data/DRGrading/Aptos/DRGrading_128x128_train.h5 \
+    --out experiments_outputs/sigma_data_train.json
+```
+
 ## `architecture_audit.py` — quantitative architecture analysis
 
 Answers three questions from the code and checkpoints rather than estimates:

@@ -15,14 +15,21 @@ shift 2
 # Defaults (fits 24GB GPU). Override via flags:
 #   --num_steps N, --batch_size N, --grad_accum N, --samp_batch_size N
 #   --resume_step N (resume from model-N.pt), --save_every N
+#   --stop_at_step N (stop this phase while keeping --num_steps as the LR-schedule total)
 #   --skip_final_sampling (end phase after training, no sampling/fake-data dump)
 #   --lr_schedule cosine --lr_warmup_steps 1000 --lr_min_lr_frac 0.1 (opt-in LR decay;
 #     off by default, i.e. constant LR, which is the EDM reference recipe)
+#   --train_frac F --train_subset_seed S --train_subset_scope diffusion|all
+#   --dr_aug none|hflip|hvflip|rot90|all
+#   --edm_sigma_data_type default|global|local
+#   --train_mixed_precision no|fp16|bf16|auto
+#   --cond_drop_prob F --setting_name NAME
 NUM_STEPS=150000
 BATCH_SIZE=64
 GRAD_ACCUM=2
 SAMP_BATCH_SIZE=100
 RESUME_STEP=0
+STOP_AT_STEP=0
 SAVE_EVERY=10000
 SKIP_FINAL_SAMPLING=0
 LR_SCHEDULE=constant
@@ -31,6 +38,11 @@ LR_MIN_FRAC=0.0
 TRAIN_FRAC=1.0
 TRAIN_SUBSET_SEED=111
 TRAIN_SUBSET_SCOPE=diffusion
+SETTING=setup1_dr
+DR_AUG=none
+SIGMA_DATA_TYPE=default
+MIXED_PRECISION=fp16
+COND_DROP_PROB=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -39,6 +51,7 @@ while [[ $# -gt 0 ]]; do
         --grad_accum)         GRAD_ACCUM="$2"; shift 2 ;;
         --samp_batch_size)    SAMP_BATCH_SIZE="$2"; shift 2 ;;
         --resume_step)        RESUME_STEP="$2"; shift 2 ;;
+        --stop_at_step)       STOP_AT_STEP="$2"; shift 2 ;;
         --save_every)         SAVE_EVERY="$2"; shift 2 ;;
         --lr_schedule)        LR_SCHEDULE="$2"; shift 2 ;;
         --lr_warmup_steps)    LR_WARMUP="$2"; shift 2 ;;
@@ -46,6 +59,11 @@ while [[ $# -gt 0 ]]; do
         --train_frac)         TRAIN_FRAC="$2"; shift 2 ;;
         --train_subset_seed)  TRAIN_SUBSET_SEED="$2"; shift 2 ;;
         --train_subset_scope) TRAIN_SUBSET_SCOPE="$2"; shift 2 ;;
+        --setting_name)       SETTING="$2"; shift 2 ;;
+        --dr_aug)             DR_AUG="$2"; shift 2 ;;
+        --edm_sigma_data_type) SIGMA_DATA_TYPE="$2"; shift 2 ;;
+        --train_mixed_precision) MIXED_PRECISION="$2"; shift 2 ;;
+        --cond_drop_prob)     COND_DROP_PROB="$2"; shift 2 ;;
         --skip_final_sampling) SKIP_FINAL_SAMPLING=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -56,7 +74,11 @@ if [ "$SKIP_FINAL_SAMPLING" -eq 1 ]; then
     SKIP_FLAG="--skip_final_sampling"
 fi
 
-SETTING="setup1_dr"
+COND_DROP_FLAG=""
+if [ -n "$COND_DROP_PROB" ]; then
+    COND_DROP_FLAG="--cond_drop_prob $COND_DROP_PROB"
+fi
+
 # Grades are discrete/ordinal (0-4) with typically severe class imbalance
 # (grade 0 is the large majority, grade 4 is rare). These vicinity settings
 # start conservative; retune kappa/min_n_per_vic once you've inspected your
@@ -77,10 +99,13 @@ python main.py \
     --batch_size_embed 256 --batch_size_embed_y2cov 256 \
     --num_img_per_label_after_replica 1000 \
     --train_frac $TRAIN_FRAC --train_subset_seed $TRAIN_SUBSET_SEED --train_subset_scope $TRAIN_SUBSET_SCOPE \
-    --train_num_steps $NUM_STEPS --resume_step $RESUME_STEP --train_lr 1e-4 \
+    --train_num_steps $NUM_STEPS --stop_at_step $STOP_AT_STEP --resume_step $RESUME_STEP --train_lr 1e-4 \
     --lr_schedule $LR_SCHEDULE --lr_warmup_steps $LR_WARMUP --lr_min_lr_frac $LR_MIN_FRAC \
+    --edm_sigma_data_type $SIGMA_DATA_TYPE \
+    --dr_aug $DR_AUG \
+    $COND_DROP_FLAG \
     --train_batch_size $BATCH_SIZE --gradient_accumulate_every $GRAD_ACCUM \
-    --train_amp --train_mixed_precision fp16 \
+    --train_amp --train_mixed_precision $MIXED_PRECISION \
     --kernel_sigma $SIGMA --threshold_type $TYPE --kappa $KAPPA \
     --use_ada_vic --ada_vic_type vanilla --min_n_per_vic 50 --use_symm_vic \
     --sample_every 2500 --save_every $SAVE_EVERY \

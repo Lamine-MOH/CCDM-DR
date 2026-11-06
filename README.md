@@ -54,6 +54,20 @@ bash config/DR64/run_train.sh /path/to/CCDM-DR /path/to/data --batch_size 8 --gr
 bash config/DR128/run_train.sh /path/to/CCDM-DR /path/to/data \
     --train_frac 0.25 --train_subset_seed 111 --train_subset_scope diffusion
 
+# Measure the EDM sigma_data scale before a calibrated retrain (no training)
+python analysis/measure_sigma_data.py --h5 /path/to/DRGrading_128x128_train.h5
+
+# Tier-4 retrain: DRGrading augmentation + calibrated sigma_data + CFG dropout
+# (0.2) + auto bf16/fp16 + cosine LR, under a new setting name
+bash config/DR128/run_train_tier4.sh /path/to/CCDM-DR /path/to/data
+
+# Phased cosine: keep the same 100k total in both phases; stop_at_step only
+# shortens the phase (avoids re-anchoring the cosine curve on resume).
+bash config/DR128/run_train_tier4.sh /path/to/CCDM-DR /path/to/data \
+    --stop_at_step 50000 --skip_final_sampling
+bash config/DR128/run_train_tier4.sh /path/to/CCDM-DR /path/to/data \
+    --resume_step 50000
+
 # 4. Generate images from a trained checkpoint (no re-training)
 python generate_from_ckpt.py \
     --model_ckpt output/DRGrading_128/setup1_dr/results/model-100000.pt \
@@ -114,7 +128,7 @@ orchestration.
 | `data_preparation/get_dataset.py` | **New.** Downloads and normalizes APTOS/IDRiD/DDR/Messidor-2 into a common `{dataset}/Images/` + `labels.csv` structure. |
 | `data_preparation/build_dr_h5.py` | **New.** Converts a fundus image folder + CSV of grades into the h5 format `dataset.py` expects, with fundus-specific preprocessing (circular field-of-view crop, optional `--clahe`), a **stratified** held-out `--test_frac` split (default 0.20, `--min_test_per_grade` guard), and per-grade train/test count printouts. |
 | `data_preparation/download_h5.py` | **New.** Downloads pre-built h5 files from Google Drive using `gdown`. Reads file IDs from `.env.h5_links` (committed). Supports `--dataset` and `--resolution` flags for selective downloads. |
-| `config/DR128/run_train.sh`, `config/DR256/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR: 128×128 (main), 256×256 (high-res), 64×64 (fast debug). All accept `ROOT_PATH`/`DATA_PATH` positionally plus overridable `--num_steps`, `--batch_size`, `--grad_accum`, `--samp_batch_size`, `--resume_step`, `--save_every`, `--skip_final_sampling`, and label-stratified subsetting via `--train_frac`, `--train_subset_seed`, `--train_subset_scope {diffusion,all}`. |
+| `config/DR128/run_train.sh`, `config/DR256/run_train.sh`, `config/DR64/run_train.sh` | **New.** Training configs for DR: 128×128 (main), 256×256 (high-res), 64×64 (fast debug). All accept `ROOT_PATH`/`DATA_PATH` positionally plus overridable `--num_steps`, `--stop_at_step`, `--batch_size`, `--grad_accum`, `--samp_batch_size`, `--resume_step`, `--save_every`, `--skip_final_sampling`, label-stratified subsetting (`--train_frac`, `--train_subset_seed`, `--train_subset_scope {diffusion,all}`), `--dr_aug`, `--edm_sigma_data_type`, `--train_mixed_precision {no,fp16,bf16,auto}`, `--cond_drop_prob`, and `--setting_name`. `run_train_tier4.sh` is the Phase-2 retrain wrapper. |
 | `generate_from_ckpt.py` | **New.** Samples a trained checkpoint without re-training or loading the training set — the diffusion weights come from `model-{step}.pt`; the label-embedding nets and training yaml must be supplied separately. Writes `generated.h5` in the same schema as the training h5, ready for `train_dr_classifier.py --synthetic_h5`. `--out_dir` defaults to `output/generated_cs{cond_scale}` and the h5 stores its generation attrs (`cond_scale`, `model_ckpt`, ...) so a generated set is self-describing. |
 | `downstream_eval/train_dr_classifier.py` | **New.** Trains a DR grading classifier (ResNet50/101, EfficientNet-B3..B5, DenseNet121/201) under real-only vs. real+synthetic conditions and reports accuracy/macro-F1/QWK. This is the primary evidence for the contribution. |
 | `downstream_eval/compare_runs.py` | **New.** Summarizes multiple `train_dr_classifier.py` runs into one comparison table. |

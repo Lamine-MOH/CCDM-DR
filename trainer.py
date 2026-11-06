@@ -43,6 +43,7 @@ class Trainer:
         gradient_accumulate_every = 1,
         train_lr = 1e-4,
         train_num_steps = 100000,
+        stop_at_step = 0,
         ema_update_after_step = 1e30,
         ema_update_every = 10,
         ema_decay = 0.999,
@@ -60,9 +61,16 @@ class Trainer:
         results_folder = './output/results',
         amp = False,
         mixed_precision_type = 'fp16',
+        dr_aug = 'none',
         max_grad_norm = 1.,
     ):
         super().__init__()
+
+        assert dr_aug in ('none', 'hflip', 'hvflip', 'rot90', 'all'), \
+            'dr_aug must be one of none|hflip|hvflip|rot90|all, got {}'.format(dr_aug)
+        self.dr_aug = dr_aug
+        if data_name == 'DRGrading':
+            print("\n DRGrading training augmentation: {}".format(self.dr_aug))
 
         # accelerator
         self.mixed_precision_type = mixed_precision_type
@@ -114,7 +122,13 @@ class Trainer:
         self.batch_size = train_batch_size
         self.gradient_accumulate_every = gradient_accumulate_every
         assert (train_batch_size * gradient_accumulate_every) >= 16, f'your effective batch size (train_batch_size x gradient_accumulate_every) should be at least 16 or above'
-        self.train_num_steps = train_num_steps
+        self.train_num_steps = int(train_num_steps)
+        # The LR schedule stays anchored to train_num_steps; stop_at_step only
+        # shortens the current phase (for phased cosine runs).
+        self.stop_at_step = int(stop_at_step) if int(stop_at_step) > 0 else self.train_num_steps
+        if self.stop_at_step > self.train_num_steps:
+            raise ValueError('stop_at_step ({}) must be <= train_num_steps ({})'.format(
+                self.stop_at_step, self.train_num_steps))
         self.max_grad_norm = max_grad_norm
         
         # optimizer
@@ -343,6 +357,13 @@ class Trainer:
             batch_real_images = random_rotate(batch_real_images)
             batch_real_images = random_hflip(batch_real_images)
             batch_real_images = random_vflip(batch_real_images)
+        if self.data_name == "DRGrading":
+            if self.dr_aug in ("hflip", "hvflip", "all"):
+                batch_real_images = random_hflip(batch_real_images)
+            if self.dr_aug in ("hvflip", "all"):
+                batch_real_images = random_vflip(batch_real_images)
+            if self.dr_aug in ("rot90", "all"):
+                batch_real_images = random_rotate(batch_real_images)
         return batch_real_images
 
 
@@ -615,6 +636,10 @@ class Trainer:
         accelerator = self.accelerator
         device = accelerator.device
 
+        if self.stop_at_step <= self.step:
+            raise ValueError('nothing to train: stop_at_step={} <= current step={}'.format(
+                self.stop_at_step, self.step))
+
         log_filename = os.path.join(self.results_folder, 'log_loss_steps{}.txt'.format(self.train_num_steps))
         if not os.path.isfile(log_filename):
             logging_file = open(log_filename, "w")
@@ -622,19 +647,20 @@ class Trainer:
         with open(log_filename, 'a') as file:
             file.write("\n===================================================================================================")
             # the log is appended to across resume phases, so record the schedule each phase ran under
-            file.write("\n LR schedule: {}, base={:.3e}, min={:.3e}, warmup={}, total={}".format(
-                self.lr_schedule, self.base_lr, self.lr_min_lr, self.lr_warmup_steps, self.train_num_steps))
+            file.write("\n LR schedule: {}, base={:.3e}, min={:.3e}, warmup={}, total={}, stop={}".format(
+                self.lr_schedule, self.base_lr, self.lr_min_lr, self.lr_warmup_steps,
+                self.train_num_steps, self.stop_at_step))
             if self.step > 0:
                 file.write("\n resumed at step {}, LR={:.3e}".format(self.step, self.fn_lr_at_step(self.step)))
 
-        with tqdm(initial = self.step, total = self.train_num_steps, disable = not accelerator.is_main_process) as pbar:
+        with tqdm(initial = self.step, total = self.stop_at_step, disable = not accelerator.is_main_process) as pbar:
 
             start_time = timeit.default_timer()
 
             # diagnostics are only ever read by the main process when writing the log
             accumulate_diag = accelerator.is_main_process
 
-            while self.step < self.train_num_steps:
+            while self.step < self.stop_at_step:
                 
                 total_loss = 0.
                 total_denoise_loss = 0.
