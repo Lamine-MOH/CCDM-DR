@@ -647,7 +647,7 @@ class Trainer:
         with open(log_filename, 'a') as file:
             file.write("\n===================================================================================================")
             # the log is appended to across resume phases, so record the schedule each phase ran under
-            file.write("\n LR schedule: {}, base={:.3e}, min={:.3e}, warmup={}, total={}, stop={}".format(
+            file.write("\nLR schedule: {}, base={:.3e}, min={:.3e}, warmup={}, total={}, stop={}".format(
                 self.lr_schedule, self.base_lr, self.lr_min_lr, self.lr_warmup_steps,
                 self.train_num_steps, self.stop_at_step))
             if self.step > 0:
@@ -745,7 +745,7 @@ class Trainer:
                     if self.step%500==0:
                         gn_field, sigma_line = self._diag_report()
                         with open(log_filename, 'a') as file:
-                            file.write("\n Step: {}, Loss: {:.4f} ({:.4f}/{:.4f}), EMA: {}, LR: {:.3e}{}, Time: {:.4f} sec.".format(
+                            file.write("\n\nStep: {}, Loss: {:.4f} ({:.4f}/{:.4f}), EMA: {}, LR: {:.3e}{}, Time: {:.4f} sec.".format(
                                 self.step, total_loss, total_denoise_loss, total_aux_reg_loss,
                                 "{:.4f}".format(self.loss_ema) if self.loss_ema is not None else "n/a",
                                 lr, gn_field, timeit.default_timer()-start_time))
