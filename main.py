@@ -424,6 +424,7 @@ diffusion_model = ElucidatedDiffusion(
                     net = unet_model,
                     fn_y2sigma_data = fn_y2sigma_data,        # function for coverting y to data's std
                     aux_loss_params = aux_loss_params,
+                    loss_weight_legacy = args.loss_weight_legacy,
                     image_size = args.image_size,
                     channels = args.num_channels,
                     num_sample_steps = args.num_sample_steps, # number of sampling steps

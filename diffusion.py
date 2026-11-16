@@ -26,6 +26,7 @@ class ElucidatedDiffusion(nn.Module):
         fn_y2sigma_data,            # function for coverting y to sigma
         aux_loss_params,            # auxiliary penalty stuffs
         *,
+        loss_weight_legacy = False,
         image_size,
         channels = 3,
         num_sample_steps = 32, # number of sampling steps
@@ -86,6 +87,7 @@ class ElucidatedDiffusion(nn.Module):
         self.y2cov_hy_weight_test = y2cov_hy_weight_test
 
         self.cond_drop_prob = float(cond_drop_prob)
+        self.loss_weight_legacy = bool(loss_weight_legacy)
         
         ## auxiliary loss params
         self.aux_loss_params = aux_loss_params
@@ -558,7 +560,10 @@ class ElucidatedDiffusion(nn.Module):
 
         denoised = self.preconditioned_network_forward(noised_images = noised_images, sigma = sigmas, labels=labels, labels_emb = labels_emb, self_cond=self_cond, train_mode=True, keep_mask=keep_mask, null_indx=null_indx)
         
-        loss = (self.loss_weight(cov_diag_y, labels, null_indx) * (denoised - images)) ** 2 #batch_size x NC x IMG_SIZE x IMG_SIZE
+        loss_weight = self.loss_weight(cov_diag_y, labels, null_indx)
+        if self.loss_weight_legacy:
+            loss_weight = loss_weight.sqrt()
+        loss = (loss_weight * (denoised - images)) ** 2 #batch_size x NC x IMG_SIZE x IMG_SIZE
         
         ## apply vicinal weights or not?
         if vicinal_weights is not None:

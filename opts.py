@@ -45,6 +45,9 @@ def parse_opts():
     parser.add_argument('--edm_sigma_max', type=float, default=80) # max noise level
     parser.add_argument('--edm_sigma_data_type', type=str, default='default', choices=["default", "local", "global"]) #default: 0.5; global: data variance of all pixel values; local: y-dependent data variance
     parser.add_argument('--edm_sigma_data_default', type=float, default=0.5)
+    parser.add_argument('--loss_weight_legacy', action='store_true', default=False,
+                        help='restore pre-Tier-3 loss weighting: apply sqrt() to loss_weight '
+                             'before squaring (effective weight w instead of w^2).')
     parser.add_argument('--edm_rho', type=float, default=7) # controls the sampling schedule
     parser.add_argument('--edm_P_mean', type=float, default=-1.2) # mean of log-normal distribution from which noise is drawn for training
     parser.add_argument('--edm_P_std', type=float, default=1.2) # standard deviation of log-normal distribution from which noise is drawn for training

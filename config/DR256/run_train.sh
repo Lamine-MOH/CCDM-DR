@@ -23,6 +23,7 @@ shift 2
 #     off by default, i.e. constant LR, which is the EDM reference recipe)
 #   --dr_aug none|hflip|hvflip|rot90|all
 #   --edm_sigma_data_type default|global|local
+#   --loss_weight_legacy (pre-Tier-3 sqrt loss weighting)
 #   --train_mixed_precision no|fp16|bf16|auto
 #   --cond_drop_prob F --setting_name NAME
 NUM_STEPS=150000
@@ -44,6 +45,7 @@ DR_AUG=none
 SIGMA_DATA_TYPE=default
 MIXED_PRECISION=fp16
 COND_DROP_PROB=""
+LOSS_WEIGHT_LEGACY=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -65,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         --edm_sigma_data_type) SIGMA_DATA_TYPE="$2"; shift 2 ;;
         --train_mixed_precision) MIXED_PRECISION="$2"; shift 2 ;;
         --cond_drop_prob)     COND_DROP_PROB="$2"; shift 2 ;;
+        --loss_weight_legacy) LOSS_WEIGHT_LEGACY=1; shift ;;
         --skip_final_sampling) SKIP_FINAL_SAMPLING=1; shift ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
@@ -78,6 +81,11 @@ fi
 COND_DROP_FLAG=""
 if [ -n "$COND_DROP_PROB" ]; then
     COND_DROP_FLAG="--cond_drop_prob $COND_DROP_PROB"
+fi
+
+LOSS_WEIGHT_FLAG=""
+if [ "$LOSS_WEIGHT_LEGACY" -eq 1 ]; then
+    LOSS_WEIGHT_FLAG="--loss_weight_legacy"
 fi
 
 # Grades are discrete/ordinal (0-4) with typically severe class imbalance
@@ -111,6 +119,7 @@ python main.py \
     --edm_sigma_data_type $SIGMA_DATA_TYPE \
     --dr_aug $DR_AUG \
     $COND_DROP_FLAG \
+    $LOSS_WEIGHT_FLAG \
     --train_batch_size $BATCH_SIZE --gradient_accumulate_every $GRAD_ACCUM \
     --train_amp --train_mixed_precision $MIXED_PRECISION \
     --kernel_sigma $SIGMA --threshold_type $TYPE --kappa $KAPPA \
